@@ -1,6 +1,6 @@
 // Package autotrader is the safety-critical core: it watches for strategy
 // signal transitions, asks the AI to confirm, and - only if every guard
-// passes - places a REAL Binance order. Every order path (automatic and
+// passes - places a REAL BingX order. Every order path (automatic and
 // manual) funnels through execute.go's sizing/validation, so nothing in
 // this codebase places an order without going through the same margin-based
 // sizing and exchange-filter checks.
@@ -12,12 +12,12 @@
 // increase position size (an explicit user choice, not an oversight).
 //
 // Auto-trading is armed by default the moment the server starts with valid
-// Binance credentials (the user's explicit choice - no dry-run gate), but
+// BingX credentials (the user's explicit choice - no dry-run gate), but
 // several independent, non-intrusive guards still apply: a runtime kill
 // switch (internal/settings), a per-symbol cooldown and a daily order-count
 // circuit breaker (both defensive - belt-and-suspenders against a logic bug
 // causing repeat orders), and the exchange-filter sizing check enforced in
-// binance.FilterCache.MaxQtyForCap.
+// bingx.FilterCache.MaxQtyForCap.
 package autotrader
 
 import (
@@ -25,7 +25,7 @@ import (
 	"time"
 
 	"cryptotrading/internal/ai"
-	"cryptotrading/internal/binance"
+	"cryptotrading/internal/bingx"
 	"cryptotrading/internal/marketdata"
 	"cryptotrading/internal/positionstore"
 	"cryptotrading/internal/signalengine"
@@ -38,8 +38,8 @@ import (
 type Trader struct {
 	Pool      *pgxpool.Pool
 	Market    *marketdata.Service
-	Binance   *binance.Client
-	Filters   *binance.FilterCache
+	BingX     *bingx.Client
+	Filters   *bingx.FilterCache
 	Positions *positionstore.Store
 	AI        *ai.Client
 	Hub       *ws.Hub
@@ -67,9 +67,9 @@ type Trader struct {
 	dayOrderCount   int
 }
 
-func New(pool *pgxpool.Pool, market *marketdata.Service, bclient *binance.Client, filters *binance.FilterCache, positions *positionstore.Store, aiClient *ai.Client, hub *ws.Hub, model string, maxAutoOrdersPerDay int, sbParams strategy.SBParams) *Trader {
+func New(pool *pgxpool.Pool, market *marketdata.Service, bclient *bingx.Client, filters *bingx.FilterCache, positions *positionstore.Store, aiClient *ai.Client, hub *ws.Hub, model string, maxAutoOrdersPerDay int, sbParams strategy.SBParams) *Trader {
 	return &Trader{
-		Pool: pool, Market: market, Binance: bclient, Filters: filters, Positions: positions,
+		Pool: pool, Market: market, BingX: bclient, Filters: filters, Positions: positions,
 		AI: aiClient, Hub: hub, Model: model,
 		MaxAutoOrdersPerDay: maxAutoOrdersPerDay,
 		MinOrderInterval:    15 * time.Minute,

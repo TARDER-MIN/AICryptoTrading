@@ -19,7 +19,7 @@ import (
 
 // MinLeverage/MaxLeverage bound what the settings API will accept, so a
 // typo or a slip of the finger in the dashboard can't silently set
-// dangerous leverage. 25x is Binance's own cap for several of this
+// dangerous leverage. 25x is BingX's own cap for several of this
 // watchlist's lower-priced pairs (the exact per-symbol max is lower for
 // some majors).
 const (

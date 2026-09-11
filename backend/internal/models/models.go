@@ -3,7 +3,7 @@ package models
 
 import "time"
 
-// Candle is one OHLCV bar for a Binance USDS-M perpetual futures symbol.
+// Candle is one OHLCV bar for a BingX USDS-M perpetual futures symbol.
 // Volume is fractional base-asset volume (not an integer share count).
 type Candle struct {
 	Symbol string    `json:"symbol"`
@@ -45,15 +45,15 @@ type AISignal struct {
 	// OTELow/OTEHigh/BreakerLow/BreakerHigh/SMT* describe the ICT-2026
 	// upgrade's additional confluence checks (internal/strategy.SBSignal) -
 	// carried through for the same reason as the sweep/FVG fields above.
-	OTELow          *float64 `json:"ote_low,omitempty"`
-	OTEHigh         *float64 `json:"ote_high,omitempty"`
-	BreakerLow      *float64 `json:"breaker_low,omitempty"`
-	BreakerHigh     *float64 `json:"breaker_high,omitempty"`
-	SMTAnchorSymbol *string  `json:"smt_anchor_symbol,omitempty"`
-	SMTConfirmed    *bool    `json:"smt_confirmed,omitempty"`
-	Rationale       string   `json:"rationale"`
-	Model      string     `json:"model"`
-	CreatedAt  time.Time  `json:"created_at"`
+	OTELow          *float64  `json:"ote_low,omitempty"`
+	OTEHigh         *float64  `json:"ote_high,omitempty"`
+	BreakerLow      *float64  `json:"breaker_low,omitempty"`
+	BreakerHigh     *float64  `json:"breaker_high,omitempty"`
+	SMTAnchorSymbol *string   `json:"smt_anchor_symbol,omitempty"`
+	SMTConfirmed    *bool     `json:"smt_confirmed,omitempty"`
+	Rationale       string    `json:"rationale"`
+	Model           string    `json:"model"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 type OrderSide string
@@ -81,32 +81,32 @@ const (
 	OrderSourceAuto   OrderSource = "auto"
 )
 
-// Order mirrors a real Binance futures order, kept locally for history/UI.
-// Binance is the source of truth; this row is a read-optimized cache.
-// Exactly one of BinanceOrderID (a regular MARKET order) or AlgoID (a
-// STOP_MARKET/TAKE_PROFIT_MARKET conditional order placed via Binance's
+// Order mirrors a real BingX futures order, kept locally for history/UI.
+// BingX is the source of truth; this row is a read-optimized cache.
+// Exactly one of BingXOrderID (a regular MARKET order) or AlgoID (a
+// STOP_MARKET/TAKE_PROFIT_MARKET conditional order placed via BingX's
 // Algo Order service) is set, never both.
 type Order struct {
-	ID             int64       `json:"id"`
-	BinanceOrderID *int64      `json:"binance_order_id,omitempty"`
-	AlgoID         *int64      `json:"algo_id,omitempty"`
-	ClientOrderID  string      `json:"client_order_id,omitempty"`
-	Symbol         string      `json:"symbol"`
-	Side           OrderSide   `json:"side"`
-	OrderType      string      `json:"order_type"`
-	ReduceOnly     bool        `json:"reduce_only"`
-	Qty            float64     `json:"qty"`
-	NotionalUSD    float64     `json:"notional_usd"`
-	Leverage       int         `json:"leverage"`
-	Status         OrderStatus `json:"status"`
-	Source         OrderSource `json:"source"`
-	FilledPrice    *float64    `json:"filled_price,omitempty"`
-	FilledAt       *time.Time  `json:"filled_at,omitempty"`
-	SubmittedAt    time.Time   `json:"submitted_at"`
-	UpdatedAt      time.Time   `json:"updated_at"`
+	ID            int64       `json:"id"`
+	BingXOrderID  *int64      `json:"binance_order_id,omitempty"`
+	AlgoID        *int64      `json:"algo_id,omitempty"`
+	ClientOrderID string      `json:"client_order_id,omitempty"`
+	Symbol        string      `json:"symbol"`
+	Side          OrderSide   `json:"side"`
+	OrderType     string      `json:"order_type"`
+	ReduceOnly    bool        `json:"reduce_only"`
+	Qty           float64     `json:"qty"`
+	NotionalUSD   float64     `json:"notional_usd"`
+	Leverage      int         `json:"leverage"`
+	Status        OrderStatus `json:"status"`
+	Source        OrderSource `json:"source"`
+	FilledPrice   *float64    `json:"filled_price,omitempty"`
+	FilledAt      *time.Time  `json:"filled_at,omitempty"`
+	SubmittedAt   time.Time   `json:"submitted_at"`
+	UpdatedAt     time.Time   `json:"updated_at"`
 }
 
-// Position is the real, live futures position as reported by Binance
+// Position is the real, live futures position as reported by BingX
 // (hydrated from REST at startup, kept current by the user-data stream).
 type Position struct {
 	Symbol           string    `json:"symbol"`

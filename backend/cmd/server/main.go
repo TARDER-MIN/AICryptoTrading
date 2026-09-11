@@ -10,7 +10,7 @@ import (
 
 	"cryptotrading/internal/ai"
 	"cryptotrading/internal/autotrader"
-	"cryptotrading/internal/binance"
+	"cryptotrading/internal/bingx"
 	"cryptotrading/internal/config"
 	"cryptotrading/internal/db"
 	"cryptotrading/internal/httpapi"
@@ -26,8 +26,8 @@ func main() {
 	defer stop()
 
 	cfg := config.Load()
-	if cfg.BinanceAPIKey == "" || cfg.BinanceAPISecret == "" {
-		log.Println("WARNING: BINANCE_API_KEY/BINANCE_API_SECRET not set - account/order endpoints will fail; market data and charting still work")
+	if cfg.BingXAPIKey == "" || cfg.BingXAPISecret == "" {
+		log.Println("WARNING: BINGX_API_KEY/BINGX_API_SECRET not set - account/order endpoints will fail; market data and charting still work")
 	}
 
 	pool, err := db.Open(ctx, cfg.DatabaseURL)
@@ -36,12 +36,12 @@ func main() {
 	}
 	defer pool.Close()
 
-	bclient := binance.NewClient(cfg.BinanceAPIKey, cfg.BinanceAPISecret, cfg.BinanceRESTBaseURL, cfg.BinanceWSBaseURL)
+	bclient := bingx.NewClient(cfg.BingXAPIKey, cfg.BingXAPISecret, cfg.BingXRESTBaseURL, cfg.BingXWSBaseURL)
 	if err := bclient.SyncClock(ctx); err != nil {
 		log.Printf("binance: initial clock sync failed (signed requests may be rejected until this succeeds): %v", err)
 	}
 
-	filters := binance.NewFilterCache(bclient)
+	filters := bingx.NewFilterCache(bclient)
 	if err := filters.Refresh(ctx); err != nil {
 		// Not fatal: MaxQtyForCap fails safe (infeasible) for any symbol
 		// with no cached filters, so no order can be placed until this
@@ -86,13 +86,13 @@ func main() {
 	}
 
 	go streamMarketData(ctx, pool, market, cfg.KlineInterval, restartCh)
-	go runUserDataStream(ctx, bclient, trader, time.Duration(cfg.ListenKeyKeepaliveMin)*time.Minute)
+	// BingX account/order state is reconciled by the 15-second REST loop below.
 	go periodicRefresh(ctx, bclient, filters)
 	go periodicAccountSync(ctx, trader)
 	go runWatchlistAIScheduler(ctx, pool, aiClient, bclient, filters, cfg.WatchlistAIRefreshHourUTC, cfg.KlineInterval, triggerRestart)
 
 	router := httpapi.NewRouter(httpapi.Deps{
-		Cfg: cfg, Pool: pool, Market: market, Binance: bclient, Filters: filters,
+		Cfg: cfg, Pool: pool, Market: market, BingX: bclient, Filters: filters,
 		Positions: positions, Trader: trader, AI: aiClient, Hub: hub,
 		RestartMarketStream: triggerRestart,
 	})
@@ -110,17 +110,12 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
-	if cfg.BinanceAPIKey != "" {
-		if err := bclient.CloseListenKey(shutdownCtx); err != nil {
-			log.Printf("binance: close listenKey on shutdown: %v", err)
-		}
-	}
 }
 
 // hydrateAccountState loads the real starting position/balance snapshot via
 // REST before anything else runs, so the dashboard isn't empty (or wrong)
 // until the first user-data-stream event arrives.
-func hydrateAccountState(ctx context.Context, bclient *binance.Client, positions *positionstore.Store) {
+func hydrateAccountState(ctx context.Context, bclient *bingx.Client, positions *positionstore.Store) {
 	if pos, err := bclient.PositionRisk(ctx); err != nil {
 		log.Printf("binance: initial PositionRisk fetch failed: %v", err)
 	} else {
@@ -138,7 +133,7 @@ func hydrateAccountState(ctx context.Context, bclient *binance.Client, positions
 // current for the life of the process. Filters rarely change, so an hourly
 // cadence is plenty; it also opportunistically re-syncs the clock at the
 // same interval to guard against slow local drift.
-func periodicRefresh(ctx context.Context, bclient *binance.Client, filters *binance.FilterCache) {
+func periodicRefresh(ctx context.Context, bclient *bingx.Client, filters *bingx.FilterCache) {
 	ticker := time.NewTicker(1 * time.Hour)
 	defer ticker.Stop()
 	for {

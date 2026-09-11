@@ -12,7 +12,7 @@ interface Props {
 // No quantity input: every order (manual or automatic) is sized
 // server-side from the fixed margin-per-order setting (notional = margin *
 // leverage) via the same validation path (internal/autotrader.
-// PlaceManualOrder -> binance.FilterCache.MaxQtyForCap) - there's nothing
+// PlaceManualOrder -> bingx.FilterCache.MaxQtyForCap) - there's nothing
 // for the user to size manually.
 export function OrderPanel({ symbol, settings, onFilled }: Props) {
   const { t } = useI18n();

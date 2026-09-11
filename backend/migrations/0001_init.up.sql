@@ -28,7 +28,7 @@ CREATE TABLE ai_signals (
 );
 CREATE INDEX idx_ai_signals_symbol ON ai_signals(symbol, created_at DESC);
 
--- Local mirror of REAL Binance futures orders (history/UI). The exchange is
+-- Local mirror of REAL BingX futures orders (history/UI). The exchange is
 -- the source of truth; this table is a read-optimized cache kept current by
 -- the user-data-stream ORDER_TRADE_UPDATE events.
 CREATE TABLE orders (
@@ -86,5 +86,5 @@ CREATE TABLE watchlist (
     added_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 INSERT INTO watchlist (symbol) VALUES
-    ('BTCUSDT'),('ETHUSDT'),('SOLUSDT'),('XRPUSDT'),
-    ('ADAUSDT'),('DOGEUSDT'),('TRXUSDT'),('1000PEPEUSDT');
+    ('BTC-USDT'),('ETH-USDT'),('SOL-USDT'),('XRP-USDT'),
+    ('ADA-USDT'),('DOGE-USDT'),('TRX-USDT'),('1000PEPE-USDT');

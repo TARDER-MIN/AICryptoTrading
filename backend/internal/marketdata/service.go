@@ -1,8 +1,8 @@
-// Package marketdata streams live Binance klines into Postgres and the
-// websocket hub. Unlike the reference TWSE project, Binance's kline stream
+// Package marketdata streams live BingX klines into Postgres and the
+// websocket hub. Unlike the reference TWSE project, BingX's kline stream
 // already tracks a fully-formed OHLCV bar server-side on every update (the
 // exchange, not this client, is doing the tick aggregation) - so there's no
-// local Aggregator, just a straight upsert of whatever Binance last sent.
+// local Aggregator, just a straight upsert of whatever BingX last sent.
 package marketdata
 
 import (
@@ -13,21 +13,21 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"cryptotrading/internal/binance"
+	"cryptotrading/internal/bingx"
 	"cryptotrading/internal/models"
 	"cryptotrading/internal/ws"
 )
 
 type Service struct {
 	pool   *pgxpool.Pool
-	client *binance.Client
+	client *bingx.Client
 	hub    *ws.Hub
 
 	fundingMu sync.RWMutex
 	funding   map[string]fundingState
 
 	// OnCandleClose, if set, fires whenever a bar finalizes (whatever
-	// interval KLINE_INTERVAL is configured to - Binance's kline "x"
+	// interval KLINE_INTERVAL is configured to - BingX's kline "x"
 	// field). Called synchronously from the stream
 	// read loop - implementations that do network calls (AI, order
 	// placement) must hand off to their own goroutine, not block here.
@@ -40,20 +40,20 @@ type fundingState struct {
 	NextFundingTime time.Time
 }
 
-func NewService(pool *pgxpool.Pool, client *binance.Client, hub *ws.Hub) *Service {
+func NewService(pool *pgxpool.Pool, client *bingx.Client, hub *ws.Hub) *Service {
 	return &Service{pool: pool, client: client, hub: hub, funding: make(map[string]fundingState)}
 }
 
 // Run subscribes to the given symbols' kline+markPrice streams and blocks
 // until ctx is cancelled or the underlying stream gives up reconnecting.
 func (s *Service) Run(ctx context.Context, symbols []string, interval string) error {
-	return s.client.RunMarketStream(ctx, symbols, interval, func(evt binance.KlineEvent) {
+	return s.client.RunMarketStream(ctx, symbols, interval, func(evt bingx.KlineEvent) {
 		s.persist(ctx, evt.Candle)
 		s.hub.Broadcast(ws.Message{Type: "candle", Data: evt.Candle})
 		if evt.Closed && s.OnCandleClose != nil {
 			s.OnCandleClose(ctx, evt.Candle)
 		}
-	}, func(evt binance.MarkPriceEvent) {
+	}, func(evt bingx.MarkPriceEvent) {
 		s.fundingMu.Lock()
 		s.funding[evt.Symbol] = fundingState{MarkPrice: evt.MarkPrice, FundingRate: evt.FundingRate, NextFundingTime: evt.NextFundingTime}
 		s.fundingMu.Unlock()
@@ -194,7 +194,7 @@ func (s *Service) PollFunding(ctx context.Context, symbols []string, every time.
 	}
 }
 
-// SeedHistory backfills the candles table from Binance's REST klines
+// SeedHistory backfills the candles table from BingX's REST klines
 // endpoint so a fresh chart/indicator window isn't empty on first load or
 // after downtime.
 func (s *Service) SeedHistory(ctx context.Context, symbol, interval string, limit int) error {

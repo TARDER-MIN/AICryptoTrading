@@ -160,7 +160,7 @@ func stripTrailingTagArtifacts(s string) string {
 
 func buildSignalPrompt(req SignalRequest) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "合約代號：%s（Binance USDS-M永續合約）\n\n", req.Symbol)
+	fmt.Fprintf(&b, "合約代號：%s（BingX USDS-M永續合約）\n\n", req.Symbol)
 
 	fmt.Fprintf(&b, "規則引擎偵測到的ICT2026 Silver Bullet設定（五項機械條件皆已通過）：\n")
 	setup := req.Setup

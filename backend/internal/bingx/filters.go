@@ -1,4 +1,4 @@
-package binance
+package bingx
 
 import (
 	"context"
@@ -49,6 +49,10 @@ func (fc *FilterCache) Refresh(ctx context.Context) error {
 	next := make(map[string]SymbolFilters, len(symbols))
 	for _, s := range symbols {
 		f := SymbolFilters{Symbol: s.Symbol, Status: s.Status, QuantityPrecision: s.QuantityPrecision, PricePrecision: s.PricePrecision}
+		f.StepSize = math.Pow10(-s.QuantityPrecision)
+		f.TickSize = math.Pow10(-s.PricePrecision)
+		f.MinQty = s.TradeMinQuantity
+		f.MinNotionalUSD = s.TradeMinUSDT
 
 		var lotStep, lotMin, lotMax float64
 		haveMarketLot := false
@@ -76,7 +80,7 @@ func (fc *FilterCache) Refresh(ctx context.Context) error {
 				}
 			}
 		}
-		if !haveMarketLot {
+		if !haveMarketLot && lotStep > 0 {
 			f.StepSize, f.MinQty, f.MaxQty = lotStep, lotMin, lotMax
 		}
 		next[s.Symbol] = f

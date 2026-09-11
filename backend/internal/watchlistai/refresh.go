@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"cryptotrading/internal/ai"
-	"cryptotrading/internal/binance"
+	"cryptotrading/internal/bingx"
 	"cryptotrading/internal/strategy"
 )
 
@@ -27,9 +27,9 @@ type Pick struct {
 
 // Result is one completed daily-selection run.
 type Result struct {
-	RunDate        string `json:"run_date"` // YYYY-MM-DD, UTC
-	CandidateCount int    `json:"candidate_count"`
-	Picks          []Pick `json:"picks"`
+	RunDate        string    `json:"run_date"` // YYYY-MM-DD, UTC
+	CandidateCount int       `json:"candidate_count"`
+	Picks          []Pick    `json:"picks"`
 	CreatedAt      time.Time `json:"created_at"`
 }
 
@@ -43,7 +43,7 @@ type Result struct {
 // everything, then re-enable/insert exactly the picked symbols) rather than
 // a DELETE+INSERT, since other parts of this schema already rely on
 // `enabled` as the single source of truth for "is this symbol live".
-func Refresh(ctx context.Context, pool *pgxpool.Pool, aiClient *ai.Client, bclient *binance.Client, filters *binance.FilterCache, capUSD float64, poolSize, pickCount int, sbParams strategy.SBParams, interval string) (*Result, error) {
+func Refresh(ctx context.Context, pool *pgxpool.Pool, aiClient *ai.Client, bclient *bingx.Client, filters *bingx.FilterCache, capUSD float64, poolSize, pickCount int, sbParams strategy.SBParams, interval string) (*Result, error) {
 	candidates, err := FetchCandidates(ctx, bclient, filters, capUSD, poolSize)
 	if err != nil {
 		return nil, fmt.Errorf("watchlistai: fetch candidates: %w", err)

@@ -13,10 +13,10 @@ type Config struct {
 	AnthropicAPIKey string
 	AnthropicModel  string
 
-	BinanceAPIKey         string
-	BinanceAPISecret      string
-	BinanceRESTBaseURL    string
-	BinanceWSBaseURL      string
+	BingXAPIKey           string
+	BingXAPISecret        string
+	BingXRESTBaseURL      string
+	BingXWSBaseURL        string
 	KlineInterval         string
 	LeverageDefault       int
 	MarginUSD             float64
@@ -48,10 +48,10 @@ func Load() Config {
 		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
 		AnthropicModel:  getenv("ANTHROPIC_MODEL", "claude-sonnet-5"),
 
-		BinanceAPIKey:         os.Getenv("BINANCE_API_KEY"),
-		BinanceAPISecret:      os.Getenv("BINANCE_API_SECRET"),
-		BinanceRESTBaseURL:    getenv("BINANCE_REST_BASE_URL", "https://fapi.binance.com"),
-		BinanceWSBaseURL:      getenv("BINANCE_WS_BASE_URL", "wss://fstream.binance.com"),
+		BingXAPIKey:           os.Getenv("BINGX_API_KEY"),
+		BingXAPISecret:        os.Getenv("BINGX_API_SECRET"),
+		BingXRESTBaseURL:      getenv("BINGX_REST_BASE_URL", "https://open-api.bingx.com"),
+		BingXWSBaseURL:        getenv("BINGX_WS_BASE_URL", "wss://open-api-swap.bingx.com/swap-market"),
 		KlineInterval:         getenv("KLINE_INTERVAL", "5m"),
 		LeverageDefault:       getenvInt("LEVERAGE_DEFAULT", 3),
 		MarginUSD:             getenvFloat("MARGIN_USD", 5.0),
@@ -76,7 +76,7 @@ const defaultAISignalSystemPrompt = "你是加密貨幣永續合約短線交易�
 // defaultAIWatchlistSystemPrompt is internal/ai.SelectDailyWatchlist's
 // system prompt when AI_WATCHLIST_SYSTEM_PROMPT isn't set in .env.
 // Deliberately short (low token cost per call).
-const defaultAIWatchlistSystemPrompt = "你是Binance永續合約選幣助手。請從候選清單中選出指定數量、recent_signal_count（近期規則實際偵測到訊號的次數）最高的合約，次要參考24h成交金額與資金費率。只能選清單內的合約，每檔給簡短理由並指出至少一項風險。務必呼叫工具回傳結果。"
+const defaultAIWatchlistSystemPrompt = "你是BingX永續合約選幣助手。請從候選清單中選出指定數量、recent_signal_count（近期規則實際偵測到訊號的次數）最高的合約，次要參考24h成交金額與資金費率。只能選清單內的合約，每檔給簡短理由並指出至少一項風險。務必呼叫工具回傳結果。"
 
 func getenv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {

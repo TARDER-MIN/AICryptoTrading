@@ -9,7 +9,7 @@ import (
 
 	"cryptotrading/internal/ai"
 	"cryptotrading/internal/autotrader"
-	"cryptotrading/internal/binance"
+	"cryptotrading/internal/bingx"
 	"cryptotrading/internal/config"
 	"cryptotrading/internal/marketdata"
 	"cryptotrading/internal/positionstore"
@@ -20,8 +20,8 @@ type Deps struct {
 	Cfg       config.Config
 	Pool      *pgxpool.Pool
 	Market    *marketdata.Service
-	Binance   *binance.Client
-	Filters   *binance.FilterCache
+	BingX     *bingx.Client
+	Filters   *bingx.FilterCache
 	Positions *positionstore.Store
 	Trader    *autotrader.Trader
 	AI        *ai.Client

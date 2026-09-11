@@ -37,7 +37,7 @@ func registerMarketRoutes(g *gin.RouterGroup, d Deps) {
 		markPrice, fundingRate, nextFundingTime, ok := d.Market.Funding(symbol)
 		if !ok {
 			// Stream hasn't produced anything yet - fall back to REST.
-			pi, err := d.Binance.PremiumIndex(c.Request.Context(), symbol)
+			pi, err := d.BingX.PremiumIndex(c.Request.Context(), symbol)
 			if err != nil {
 				c.JSON(http.StatusServiceUnavailable, gin.H{"error": "funding data not available yet"})
 				return

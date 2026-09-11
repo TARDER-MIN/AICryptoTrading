@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"cryptotrading/internal/ai"
-	"cryptotrading/internal/binance"
+	"cryptotrading/internal/bingx"
 	"cryptotrading/internal/settings"
 	"cryptotrading/internal/strategy"
 	"cryptotrading/internal/watchlistai"
@@ -18,8 +18,8 @@ import (
 // calendar day at refreshHourUTC, skipping the wait if today doesn't have a
 // run yet (covers a restart after the scheduled hour already passed).
 // Unlike the sibling TWSEDailyTrading project's scheduler, there is no
-// weekday/holiday skip logic - Binance perpetuals trade every day.
-func runWatchlistAIScheduler(ctx context.Context, pool *pgxpool.Pool, aiClient *ai.Client, bclient *binance.Client, filters *binance.FilterCache, refreshHourUTC int, interval string, restart func()) {
+// weekday/holiday skip logic - BingX perpetuals trade every day.
+func runWatchlistAIScheduler(ctx context.Context, pool *pgxpool.Pool, aiClient *ai.Client, bclient *bingx.Client, filters *bingx.FilterCache, refreshHourUTC int, interval string, restart func()) {
 	if !aiClient.Enabled() {
 		log.Println("watchlistai: ANTHROPIC_API_KEY not set - daily watchlist scheduler disabled")
 		return
@@ -54,7 +54,7 @@ func runWatchlistAIScheduler(ctx context.Context, pool *pgxpool.Pool, aiClient *
 	}
 }
 
-func runWatchlistAIRefresh(ctx context.Context, pool *pgxpool.Pool, aiClient *ai.Client, bclient *binance.Client, filters *binance.FilterCache, interval string, restart func()) {
+func runWatchlistAIRefresh(ctx context.Context, pool *pgxpool.Pool, aiClient *ai.Client, bclient *bingx.Client, filters *bingx.FilterCache, interval string, restart func()) {
 	st, err := settings.Get(ctx, pool)
 	if err != nil {
 		log.Printf("watchlistai: load settings failed: %v", err)

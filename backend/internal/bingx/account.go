@@ -1,4 +1,4 @@
-package binance
+package bingx
 
 import (
 	"context"
@@ -11,21 +11,29 @@ import (
 )
 
 type accountResponse struct {
-	TotalWalletBalance    numStr `json:"totalWalletBalance"`
-	AvailableBalance      numStr `json:"availableBalance"`
-	TotalUnrealizedProfit numStr `json:"totalUnrealizedProfit"`
+	Asset            string `json:"asset"`
+	Balance          numStr `json:"balance"`
+	AvailableMargin  numStr `json:"availableMargin"`
+	UnrealizedProfit numStr `json:"unrealizedProfit"`
 }
 
 // Account fetches the account-level balance snapshot (signed).
 func (c *Client) Account(ctx context.Context) (*models.AccountSummary, error) {
-	var out accountResponse
-	if err := c.do(ctx, http.MethodGet, "/fapi/v2/account", nil, true, true, &out); err != nil {
+	var rows []accountResponse
+	if err := c.do(ctx, http.MethodGet, "/openApi/swap/v3/user/balance", nil, true, true, &rows); err != nil {
 		return nil, err
 	}
+	var out accountResponse
+	for _, r := range rows {
+		if r.Asset == "USDT" {
+			out = r
+			break
+		}
+	}
 	return &models.AccountSummary{
-		WalletBalanceUSD:    out.TotalWalletBalance.Float(),
-		AvailableBalanceUSD: out.AvailableBalance.Float(),
-		TotalUnrealizedPnL:  out.TotalUnrealizedProfit.Float(),
+		WalletBalanceUSD:    out.Balance.Float(),
+		AvailableBalanceUSD: out.AvailableMargin.Float(),
+		TotalUnrealizedPnL:  out.UnrealizedProfit.Float(),
 		UpdatedAt:           time.Now(),
 	}, nil
 }
@@ -33,12 +41,11 @@ func (c *Client) Account(ctx context.Context) (*models.AccountSummary, error) {
 type positionRiskRow struct {
 	Symbol           string `json:"symbol"`
 	PositionAmt      numStr `json:"positionAmt"`
-	EntryPrice       numStr `json:"entryPrice"`
-	MarkPrice        numStr `json:"markPrice"`
+	EntryPrice       numStr `json:"avgPrice"`
 	UnRealizedProfit numStr `json:"unRealizedProfit"`
 	LiquidationPrice numStr `json:"liquidationPrice"`
 	Leverage         numStr `json:"leverage"`
-	MarginType       string `json:"marginType"`
+	Isolated         bool   `json:"isolated"`
 	PositionSide     string `json:"positionSide"`
 }
 
@@ -47,7 +54,7 @@ type positionRiskRow struct {
 // for every symbol regardless of whether a position is open.
 func (c *Client) PositionRisk(ctx context.Context) ([]models.Position, error) {
 	var rows []positionRiskRow
-	if err := c.do(ctx, http.MethodGet, "/fapi/v2/positionRisk", nil, true, true, &rows); err != nil {
+	if err := c.do(ctx, http.MethodGet, "/openApi/swap/v2/user/positions", nil, true, true, &rows); err != nil {
 		return nil, err
 	}
 
@@ -59,20 +66,34 @@ func (c *Client) PositionRisk(ctx context.Context) ([]models.Position, error) {
 			continue
 		}
 		side := "long"
-		if amt < 0 {
+		if r.PositionSide == "SHORT" {
 			side = "short"
+		}
+		if amt < 0 {
 			amt = -amt
+		}
+		mark := r.EntryPrice.Float()
+		if amt > 0 {
+			if side == "long" {
+				mark += r.UnRealizedProfit.Float() / amt
+			} else {
+				mark -= r.UnRealizedProfit.Float() / amt
+			}
+		}
+		marginType := "CROSSED"
+		if r.Isolated {
+			marginType = "ISOLATED"
 		}
 		out = append(out, models.Position{
 			Symbol:           r.Symbol,
 			Side:             side,
 			Qty:              amt,
 			EntryPrice:       r.EntryPrice.Float(),
-			MarkPrice:        r.MarkPrice.Float(),
+			MarkPrice:        mark,
 			UnrealizedPnL:    r.UnRealizedProfit.Float(),
 			Leverage:         int(r.Leverage.Float()),
 			LiquidationPrice: r.LiquidationPrice.Float(),
-			MarginType:       r.MarginType,
+			MarginType:       marginType,
 			UpdatedAt:        now,
 		})
 	}
@@ -82,8 +103,17 @@ func (c *Client) PositionRisk(ctx context.Context) ([]models.Position, error) {
 // SetLeverage sets the leverage for symbol (signed). Idempotent - Binance
 // accepts re-setting the same leverage without error.
 func (c *Client) SetLeverage(ctx context.Context, symbol string, leverage int) error {
-	params := url.Values{"symbol": {symbol}, "leverage": {strconv.Itoa(leverage)}}
-	return c.do(ctx, http.MethodPost, "/fapi/v1/leverage", params, true, true, nil)
+	sides := []string{"BOTH"}
+	if c.hedgeMode() {
+		sides = []string{"LONG", "SHORT"}
+	}
+	for _, side := range sides {
+		params := url.Values{"symbol": {symbol}, "leverage": {strconv.Itoa(leverage)}, "side": {side}}
+		if err := c.do(ctx, http.MethodPost, "/openApi/swap/v2/trade/leverage", params, true, true, nil); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // binanceErrMarginTypeUnchanged is Binance's error code for "No need to
@@ -96,11 +126,7 @@ const binanceErrMarginTypeUnchanged = -4046
 // code -4046, which is not a real failure for our idempotent startup call).
 func (c *Client) SetMarginType(ctx context.Context, symbol, marginType string) error {
 	params := url.Values{"symbol": {symbol}, "marginType": {marginType}}
-	err := c.do(ctx, http.MethodPost, "/fapi/v1/marginType", params, true, true, nil)
-	if ec, ok := AsErrCode(err); ok && ec.Code == binanceErrMarginTypeUnchanged {
-		return nil
-	}
-	return err
+	return c.do(ctx, http.MethodPost, "/openApi/swap/v2/trade/marginType", params, true, true, nil)
 }
 
 type OrderResponse struct {
@@ -127,7 +153,7 @@ func (c *Client) PlaceMarketOrder(ctx context.Context, symbol string, side model
 		"quantity":         {strconv.FormatFloat(qty, 'f', -1, 64)},
 		"newOrderRespType": {"RESULT"},
 	}
-	if reduceOnly {
+	if reduceOnly && !c.hedgeMode() {
 		params.Set("reduceOnly", "true")
 	}
 	if clientOrderID != "" {
@@ -135,7 +161,8 @@ func (c *Client) PlaceMarketOrder(ctx context.Context, symbol string, side model
 	}
 
 	var out OrderResponse
-	if err := c.do(ctx, http.MethodPost, "/fapi/v1/order", params, true, true, &out); err != nil {
+	params.Set("positionSide", c.positionSide(string(side), reduceOnly))
+	if err := c.do(ctx, http.MethodPost, "/openApi/swap/v2/trade/order", params, true, true, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -148,7 +175,7 @@ func (c *Client) PlaceMarketOrder(ctx context.Context, symbol string, side model
 func (c *Client) QueryOrder(ctx context.Context, symbol string, orderID int64) (*OrderResponse, error) {
 	params := url.Values{"symbol": {symbol}, "orderId": {strconv.FormatInt(orderID, 10)}}
 	var out OrderResponse
-	if err := c.do(ctx, http.MethodGet, "/fapi/v1/order", params, true, true, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, "/openApi/swap/v2/trade/order", params, true, true, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

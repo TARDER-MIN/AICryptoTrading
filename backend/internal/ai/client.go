@@ -1,4 +1,4 @@
-// Package ai wraps the Claude API for trade-signal generation on Binance
+// Package ai wraps the Claude API for trade-signal generation on BingX
 // USDS-M perpetual futures. When ANTHROPIC_API_KEY is unset, Client.Enabled()
 // is false and callers should surface a "not configured" status rather than
 // fail hard - critically, the autotrader treats this as a hard stop: it

@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"cryptotrading/internal/backtest"
-	"cryptotrading/internal/binance"
+	"cryptotrading/internal/bingx"
 	"cryptotrading/internal/models"
 	"cryptotrading/internal/strategy"
 )
@@ -54,11 +54,11 @@ type Candidate struct {
 // FetchCandidates pulls the full USDT-margined perpetual universe (live
 // exchangeInfo + 24h ticker + funding rate, all unauthenticated bulk
 // calls), keeps only symbols that are actually tradable under the current
-// margin*leverage setting (binance.FilterCache.MaxQtyForCap -
+// margin*leverage setting (bingx.FilterCache.MaxQtyForCap -
 // recommending something the bot can't actually auto-trade would defeat
 // the point), ranks by 24h quote volume (the standard liquidity signal),
 // and returns the top poolSize.
-func FetchCandidates(ctx context.Context, bclient *binance.Client, filters *binance.FilterCache, capUSD float64, poolSize int) ([]Candidate, error) {
+func FetchCandidates(ctx context.Context, bclient *bingx.Client, filters *bingx.FilterCache, capUSD float64, poolSize int) ([]Candidate, error) {
 	symbols, err := bclient.ExchangeInfo(ctx)
 	if err != nil {
 		return nil, err
@@ -125,7 +125,7 @@ func FetchCandidates(ctx context.Context, bclient *binance.Client, filters *bina
 // A per-candidate fetch/backtest failure only zeroes that one candidate's
 // count (logged by the caller, if it cares) rather than aborting the whole
 // scan - one bad symbol shouldn't block ranking the other 40-some.
-func AnnotateSignalFrequency(ctx context.Context, bclient *binance.Client, candidates []Candidate, params strategy.SBParams, interval string) []Candidate {
+func AnnotateSignalFrequency(ctx context.Context, bclient *bingx.Client, candidates []Candidate, params strategy.SBParams, interval string) []Candidate {
 	end := time.Now()
 	start := end.AddDate(0, 0, -SignalScanLookbackDays)
 

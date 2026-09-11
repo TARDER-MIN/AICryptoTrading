@@ -1,9 +1,10 @@
-package binance
+package bingx
 
 import (
 	"context"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"time"
 
@@ -15,30 +16,44 @@ import (
 // PRICE_FILTER filters used to size and validate orders.
 type ExchangeInfoSymbol struct {
 	Symbol            string           `json:"symbol"`
-	Status            string           `json:"status"` // "TRADING" when live
+	Status            string           `json:"-"` // normalized to "TRADING" when live
 	ContractType      string           `json:"contractType"`
 	QuoteAsset        string           `json:"quoteAsset"`
 	QuantityPrecision int              `json:"quantityPrecision"`
 	PricePrecision    int              `json:"pricePrecision"`
 	Filters           []map[string]any `json:"filters"`
-}
-
-type exchangeInfoResponse struct {
-	Symbols []ExchangeInfoSymbol `json:"symbols"`
+	TradeMinQuantity  float64          `json:"tradeMinQuantity"`
+	TradeMinUSDT      float64          `json:"tradeMinUSDT"`
+	StatusCode        int              `json:"status"`
+	APIStateOpen      string           `json:"apiStateOpen"`
+	Currency          string           `json:"currency"`
+	Asset             string           `json:"asset"`
 }
 
 // ExchangeInfo fetches the full symbol/filter table. Unauthenticated.
 func (c *Client) ExchangeInfo(ctx context.Context) ([]ExchangeInfoSymbol, error) {
-	var out exchangeInfoResponse
-	if err := c.do(ctx, http.MethodGet, "/fapi/v1/exchangeInfo", nil, false, false, &out); err != nil {
+	var out []ExchangeInfoSymbol
+	if err := c.do(ctx, http.MethodGet, "/openApi/swap/v2/quote/contracts", nil, false, false, &out); err != nil {
 		return nil, err
 	}
-	return out.Symbols, nil
+	for i := range out {
+		if out[i].StatusCode == 1 && out[i].APIStateOpen == "true" {
+			out[i].Status = "TRADING"
+		}
+		out[i].QuoteAsset = out[i].Currency
+		out[i].ContractType = "PERPETUAL"
+	}
+	return out, nil
 }
 
-// klineRow mirrors Binance's REST kline array-of-arrays shape:
-// [openTime, open, high, low, close, volume, closeTime, ...].
-type klineRow [12]any
+type klineRow struct {
+	Open   numStr `json:"open"`
+	Close  numStr `json:"close"`
+	High   numStr `json:"high"`
+	Low    numStr `json:"low"`
+	Volume numStr `json:"volume"`
+	Time   int64  `json:"time"`
+}
 
 // Klines returns historical candles for symbol, oldest first.
 func (c *Client) Klines(ctx context.Context, symbol, interval string, limit int) ([]models.Candle, error) {
@@ -48,23 +63,23 @@ func (c *Client) Klines(ctx context.Context, symbol, interval string, limit int)
 		"limit":    {strconv.Itoa(limit)},
 	}
 	var raw []klineRow
-	if err := c.do(ctx, http.MethodGet, "/fapi/v1/klines", params, false, false, &raw); err != nil {
+	if err := c.do(ctx, http.MethodGet, "/openApi/swap/v3/quote/klines", params, false, false, &raw); err != nil {
 		return nil, err
 	}
 
 	out := make([]models.Candle, 0, len(raw))
 	for _, k := range raw {
-		openTimeMs, _ := k[0].(float64)
 		out = append(out, models.Candle{
 			Symbol: symbol,
-			Ts:     time.UnixMilli(int64(openTimeMs)),
-			Open:   parseAny(k[1]),
-			High:   parseAny(k[2]),
-			Low:    parseAny(k[3]),
-			Close:  parseAny(k[4]),
-			Volume: parseAny(k[5]),
+			Ts:     time.UnixMilli(k.Time),
+			Open:   k.Open.Float(),
+			High:   k.High.Float(),
+			Low:    k.Low.Float(),
+			Close:  k.Close.Float(),
+			Volume: k.Volume.Float(),
 		})
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Ts.Before(out[j].Ts) })
 	return out, nil
 }
 
@@ -86,53 +101,58 @@ func parseAny(v any) float64 {
 // meaningful backtest train/validation split, far more than the single
 // SeedHistory call (limit-only, most-recent-N) used for live chart seeding.
 func (c *Client) KlinesRange(ctx context.Context, symbol, interval string, start, end time.Time) ([]models.Candle, error) {
-	const pageLimit = 1500
+	const pageLimit = 1440
 	var out []models.Candle
-	cursor := start
+	cursorEnd := end
 
-	for cursor.Before(end) {
+	for cursorEnd.After(start) {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
 		params := url.Values{
 			"symbol":    {symbol},
 			"interval":  {interval},
-			"startTime": {strconv.FormatInt(cursor.UnixMilli(), 10)},
-			"endTime":   {strconv.FormatInt(end.UnixMilli(), 10)},
+			"startTime": {strconv.FormatInt(start.UnixMilli(), 10)},
+			"endTime":   {strconv.FormatInt(cursorEnd.UnixMilli(), 10)},
 			"limit":     {strconv.Itoa(pageLimit)},
 		}
 		var raw []klineRow
-		if err := c.do(ctx, http.MethodGet, "/fapi/v1/klines", params, false, false, &raw); err != nil {
+		if err := c.do(ctx, http.MethodGet, "/openApi/swap/v3/quote/klines", params, false, false, &raw); err != nil {
 			return nil, err
 		}
 		if len(raw) == 0 {
 			break
 		}
 
+		earliest := cursorEnd
 		for _, k := range raw {
-			openTimeMs, _ := k[0].(float64)
+			ts := time.UnixMilli(k.Time)
+			if ts.Before(start) || ts.After(end) {
+				continue
+			}
+			if ts.Before(earliest) {
+				earliest = ts
+			}
 			out = append(out, models.Candle{
 				Symbol: symbol,
-				Ts:     time.UnixMilli(int64(openTimeMs)),
-				Open:   parseAny(k[1]),
-				High:   parseAny(k[2]),
-				Low:    parseAny(k[3]),
-				Close:  parseAny(k[4]),
-				Volume: parseAny(k[5]),
+				Ts:     ts,
+				Open:   k.Open.Float(),
+				High:   k.High.Float(),
+				Low:    k.Low.Float(),
+				Close:  k.Close.Float(),
+				Volume: k.Volume.Float(),
 			})
 		}
-
-		last := out[len(out)-1]
-		if !last.Ts.After(cursor) {
+		if !earliest.Before(cursorEnd) {
 			break // safety valve against an infinite loop if the API ever stops advancing
 		}
-		cursor = last.Ts.Add(time.Millisecond)
+		cursorEnd = earliest.Add(-time.Millisecond)
 
 		if len(raw) < pageLimit {
 			break // reached the end of available data before `end`
 		}
 	}
-
+	sort.Slice(out, func(i, j int) bool { return out[i].Ts.Before(out[j].Ts) })
 	return out, nil
 }
 
@@ -152,7 +172,7 @@ type Ticker24hr struct {
 // (no `symbol` param). Unauthenticated.
 func (c *Client) Ticker24hrAll(ctx context.Context) ([]Ticker24hr, error) {
 	var out []Ticker24hr
-	if err := c.do(ctx, http.MethodGet, "/fapi/v1/ticker/24hr", nil, false, false, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, "/openApi/swap/v2/quote/ticker", nil, false, false, &out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -171,7 +191,7 @@ type PremiumIndexResult struct {
 func (c *Client) PremiumIndex(ctx context.Context, symbol string) (*PremiumIndexResult, error) {
 	params := url.Values{"symbol": {symbol}}
 	var out PremiumIndexResult
-	if err := c.do(ctx, http.MethodGet, "/fapi/v1/premiumIndex", params, false, false, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, "/openApi/swap/v2/quote/premiumIndex", params, false, false, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -182,7 +202,7 @@ func (c *Client) PremiumIndex(ctx context.Context, symbol string) (*PremiumIndex
 // call per candidate when ranking dozens of symbols.
 func (c *Client) PremiumIndexAll(ctx context.Context) ([]PremiumIndexResult, error) {
 	var out []PremiumIndexResult
-	if err := c.do(ctx, http.MethodGet, "/fapi/v1/premiumIndex", nil, false, false, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, "/openApi/swap/v2/quote/premiumIndex", nil, false, false, &out); err != nil {
 		return nil, err
 	}
 	return out, nil

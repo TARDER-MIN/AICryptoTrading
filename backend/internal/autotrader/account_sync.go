@@ -4,15 +4,15 @@ import (
 	"context"
 	"log"
 
-	"cryptotrading/internal/binance"
+	"cryptotrading/internal/bingx"
 	"cryptotrading/internal/models"
 	"cryptotrading/internal/ws"
 )
 
-// HandleAccountUpdate applies a Binance user-data-stream ACCOUNT_UPDATE
+// HandleAccountUpdate applies a BingX user-data-stream ACCOUNT_UPDATE
 // event to the in-memory position/balance cache and rebroadcasts the
 // refreshed state to the dashboard.
-func (t *Trader) HandleAccountUpdate(evt binance.AccountUpdateEvent) {
+func (t *Trader) HandleAccountUpdate(evt bingx.AccountUpdateEvent) {
 	for _, p := range evt.Positions {
 		t.Positions.UpsertFromAccountUpdate(p.Symbol, p.PositionAmt, p.EntryPrice, p.UnrealizedProfit, p.MarginType)
 	}
@@ -27,11 +27,11 @@ func (t *Trader) HandleAccountUpdate(evt binance.AccountUpdateEvent) {
 	t.Hub.Broadcast(ws.Message{Type: "balance", Data: t.Positions.Account()})
 }
 
-// HandleOrderUpdate applies a Binance user-data-stream ORDER_TRADE_UPDATE
+// HandleOrderUpdate applies a BingX user-data-stream ORDER_TRADE_UPDATE
 // event to the local orders mirror table (status/fill price) and
 // rebroadcasts it. Orders not placed by this backend (binance_order_id not
 // found locally) are ignored - they're outside this dashboard's scope.
-func (t *Trader) HandleOrderUpdate(ctx context.Context, evt binance.OrderUpdateEvent) {
+func (t *Trader) HandleOrderUpdate(ctx context.Context, evt bingx.OrderUpdateEvent) {
 	var filledPrice *float64
 	if evt.AvgPrice > 0 {
 		fp := evt.AvgPrice
@@ -76,13 +76,13 @@ func (t *Trader) HandleOrderUpdate(ctx context.Context, evt binance.OrderUpdateE
 // wrong (e.g. showing a symbol as flat when it's actually held) with no
 // visible error, which matters a lot for a live-money auto-trading bot.
 func (t *Trader) SyncAccountState(ctx context.Context) error {
-	pos, err := t.Binance.PositionRisk(ctx)
+	pos, err := t.BingX.PositionRisk(ctx)
 	if err != nil {
 		return err
 	}
 	t.Positions.SetPositions(pos)
 
-	acct, err := t.Binance.Account(ctx)
+	acct, err := t.BingX.Account(ctx)
 	if err != nil {
 		return err
 	}
@@ -95,7 +95,7 @@ func (t *Trader) SyncAccountState(ctx context.Context) error {
 }
 
 // ReconcilePendingOrders re-checks every locally-tracked order still in a
-// non-terminal status against Binance via REST - the fallback counterpart
+// non-terminal status against BingX via REST - the fallback counterpart
 // to HandleOrderUpdate, for the same reason SyncAccountState exists. Covers
 // both regular orders (GET /fapi/v1/order) and algo stop-loss/take-profit
 // orders (GET /fapi/v1/algoOrder, a separate ID space and status set - see
@@ -130,7 +130,7 @@ func (t *Trader) ReconcilePendingOrders(ctx context.Context) error {
 
 	for _, p := range pending {
 		if p.algoID != nil {
-			t.reconcileAlgoOrder(ctx, p.id, *p.algoID)
+			t.reconcileAlgoOrder(ctx, p.id, *p.algoID, p.symbol)
 			continue
 		}
 		if p.orderID != nil {
@@ -141,7 +141,7 @@ func (t *Trader) ReconcilePendingOrders(ctx context.Context) error {
 }
 
 func (t *Trader) reconcileRegularOrder(ctx context.Context, localID, orderID int64, symbol string) {
-	resp, err := t.Binance.QueryOrder(ctx, symbol, orderID)
+	resp, err := t.BingX.QueryOrder(ctx, symbol, orderID)
 	if err != nil {
 		log.Printf("autotrader: reconcile order %d (%s): %v", orderID, symbol, err)
 		return
@@ -171,8 +171,8 @@ func (t *Trader) reconcileRegularOrder(ctx context.Context, localID, orderID int
 	}
 }
 
-func (t *Trader) reconcileAlgoOrder(ctx context.Context, localID, algoID int64) {
-	resp, err := t.Binance.QueryAlgoOrder(ctx, algoID)
+func (t *Trader) reconcileAlgoOrder(ctx context.Context, localID, algoID int64, symbol string) {
+	resp, err := t.BingX.QueryAlgoOrder(ctx, symbol, algoID)
 	if err != nil {
 		log.Printf("autotrader: reconcile algo order %d: %v", algoID, err)
 		return

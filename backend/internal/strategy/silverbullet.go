@@ -31,7 +31,7 @@
 // Unlike ICT's original equities/forex-session-based definition, this
 // detector does NOT gate on a time-of-day window (e.g. the classic NY
 // 10:00-11:00/14:00-15:00 "Silver Bullet" hours) - by explicit user
-// decision, since Binance perpetuals trade 24/7 and there's no equivalent
+// decision, since BingX perpetuals trade 24/7 and there's no equivalent
 // session structure to key off. A qualifying setup is evaluated whenever it
 // occurs, at any hour.
 package strategy
@@ -49,16 +49,16 @@ import (
 // trading watchlist (see cmd/server/streams.go), since the daily AI
 // watchlist selection (internal/watchlistai) can freely drop BTC/ETH from
 // the tradable set while SMT confirmation still needs their live structure.
-var AnchorSymbols = []string{"BTCUSDT", "ETHUSDT"}
+var AnchorSymbols = []string{"BTC-USDT", "ETH-USDT"}
 
 // AnchorSymbolFor returns the correlated reference symbol used for SMT
 // divergence confirmation: BTCUSDT for everything except BTCUSDT itself,
 // which uses ETHUSDT instead.
 func AnchorSymbolFor(symbol string) string {
-	if symbol == "BTCUSDT" {
-		return "ETHUSDT"
+	if symbol == "BTC-USDT" {
+		return "ETH-USDT"
 	}
-	return "BTCUSDT"
+	return "BTC-USDT"
 }
 
 // SBParams are the tunable Silver Bullet parameters. The first five are

@@ -70,7 +70,7 @@ func registerWatchlistRoutes(g *gin.RouterGroup, d Deps) {
 		}
 
 		if _, ok := d.Filters.Get(body.Symbol); !ok {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "unknown symbol (not found in Binance exchangeInfo)"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "unknown symbol (not found in BingX exchangeInfo)"})
 			return
 		}
 

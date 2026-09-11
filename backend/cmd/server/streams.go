@@ -3,14 +3,13 @@ package main
 import (
 	"context"
 	"log"
-	"time"
-
 	"slices"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"cryptotrading/internal/autotrader"
-	"cryptotrading/internal/binance"
+	"cryptotrading/internal/bingx"
 	"cryptotrading/internal/marketdata"
 	"cryptotrading/internal/strategy"
 )
@@ -138,10 +137,10 @@ func streamMarketData(ctx context.Context, pool *pgxpool.Pool, market *marketdat
 // runUserDataStream owns the full listenKey lifecycle: create, keepalive on
 // a ticker, reconnect with backoff on any drop, and mint a fresh listenKey
 // (rather than reconnecting to a dead one) whenever the stream reports
-// listenKeyExpired. Requires Binance API credentials - logs and returns
+// listenKeyExpired. Requires BingX API credentials - logs and returns
 // early if they're not configured, leaving position/balance data at
 // whatever the initial REST hydration produced.
-func runUserDataStream(ctx context.Context, bclient *binance.Client, trader *autotrader.Trader, keepaliveInterval time.Duration) {
+func runUserDataStream(ctx context.Context, bclient *bingx.Client, trader *autotrader.Trader, keepaliveInterval time.Duration) {
 	backoff := time.Second
 	for {
 		if ctx.Err() != nil {
@@ -166,7 +165,7 @@ func runUserDataStream(ctx context.Context, bclient *binance.Client, trader *aut
 		keepaliveCtx, stopKeepalive := context.WithCancel(ctx)
 		go bclient.KeepAliveLoop(keepaliveCtx, keepaliveInterval)
 
-		err = bclient.RunUserStream(ctx, listenKey, trader.HandleAccountUpdate, func(evt binance.OrderUpdateEvent) {
+		err = bclient.RunUserStream(ctx, listenKey, trader.HandleAccountUpdate, func(evt bingx.OrderUpdateEvent) {
 			trader.HandleOrderUpdate(ctx, evt)
 		})
 		stopKeepalive()
@@ -174,7 +173,7 @@ func runUserDataStream(ctx context.Context, bclient *binance.Client, trader *aut
 		if ctx.Err() != nil {
 			return
 		}
-		if binance.IsListenKeyExpired(err) {
+		if bingx.IsListenKeyExpired(err) {
 			log.Println("binance: listenKey expired, minting a fresh one")
 			continue
 		}

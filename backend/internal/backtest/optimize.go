@@ -38,7 +38,7 @@ const (
 
 // Optimize grid-searches strategy.SBParams over historical candles pooled
 // across every symbol in tradableSymbols (all fetched over the same
-// absolute date range - see internal/binance.KlinesRange - so a single
+// absolute date range - see internal/bingx.KlinesRange - so a single
 // global split timestamp at trainFrac of that range applies uniformly).
 // candlesBySymbol may additionally contain entries for symbols NOT in
 // tradableSymbols (namely strategy.AnchorSymbols, BTC/ETH, kept fresh for

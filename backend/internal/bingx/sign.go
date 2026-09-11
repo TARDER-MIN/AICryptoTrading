@@ -1,4 +1,4 @@
-package binance
+package bingx
 
 import (
 	"crypto/hmac"

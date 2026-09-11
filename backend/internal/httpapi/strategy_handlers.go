@@ -13,8 +13,10 @@ import (
 	"cryptotrading/internal/strategy"
 )
 
-const optimizeHistoryDays = 60
-const optimizeTrainFraction = 0.7
+const (
+	optimizeHistoryDays   = 60
+	optimizeTrainFraction = 0.7
+)
 
 func registerStrategyRoutes(g *gin.RouterGroup, d Deps) {
 	g.GET("/strategy/params", func(c *gin.Context) {
@@ -82,7 +84,7 @@ func registerStrategyRoutes(g *gin.RouterGroup, d Deps) {
 
 		candlesBySymbol := make(map[string][]models.Candle, len(fetchSet))
 		for _, symbol := range fetchSet {
-			candles, err := d.Binance.KlinesRange(ctx, symbol, d.Cfg.KlineInterval, start, end)
+			candles, err := d.BingX.KlinesRange(ctx, symbol, d.Cfg.KlineInterval, start, end)
 			if err != nil {
 				c.JSON(http.StatusBadGateway, gin.H{"error": "fetch history for " + symbol + ": " + err.Error()})
 				return

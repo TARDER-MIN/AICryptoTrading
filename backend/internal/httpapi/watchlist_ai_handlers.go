@@ -34,7 +34,7 @@ func registerWatchlistAIRoutes(g *gin.RouterGroup, d Deps) {
 			return
 		}
 
-		result, err := watchlistai.Refresh(ctx, d.Pool, d.AI, d.Binance, d.Filters,
+		result, err := watchlistai.Refresh(ctx, d.Pool, d.AI, d.BingX, d.Filters,
 			st.EffectiveNotionalUSD, watchlistai.DefaultCandidatePool, watchlistai.DefaultPickCount,
 			sbParams, d.Cfg.KlineInterval)
 		if err != nil {

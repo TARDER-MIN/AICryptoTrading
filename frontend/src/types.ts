@@ -77,7 +77,7 @@ export interface Order {
   id: number;
   binance_order_id?: number;
   // Set instead of binance_order_id for a stop-loss/take-profit order
-  // (Binance's Algo Order service - a separate ID space).
+  // (BingX's Algo Order service - a separate ID space).
   algo_id?: number;
   client_order_id?: string;
   symbol: string;
@@ -141,7 +141,7 @@ export interface WSMessage<T = unknown> {
 
 // --- Silver Bullet strategy / backtest optimization (ICT 2026 upgrade) ---
 // No time-of-day session gating (e.g. ICT's classic NY 10-11am/2-3pm
-// windows) - by explicit user choice, since Binance perpetuals trade 24/7.
+// windows) - by explicit user choice, since BingX perpetuals trade 24/7.
 // A setup is evaluated whenever it occurs: sweep -> displacement-quality FVG
 // -> Optimal Trade Entry (OTE) retracement -> Breaker Block (Unicorn Model)
 // confluence -> SMT divergence confirmation against a correlated anchor.

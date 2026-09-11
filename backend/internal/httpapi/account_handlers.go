@@ -38,7 +38,7 @@ func registerAccountRoutes(g *gin.RouterGroup, d Deps) {
 		out := []models.Order{}
 		for rows.Next() {
 			var o models.Order
-			if err := rows.Scan(&o.ID, &o.BinanceOrderID, &o.AlgoID, &o.ClientOrderID, &o.Symbol, &o.Side, &o.OrderType, &o.ReduceOnly, &o.Qty, &o.NotionalUSD, &o.Leverage, &o.Status, &o.Source, &o.FilledPrice, &o.FilledAt, &o.SubmittedAt, &o.UpdatedAt); err != nil {
+			if err := rows.Scan(&o.ID, &o.BingXOrderID, &o.AlgoID, &o.ClientOrderID, &o.Symbol, &o.Side, &o.OrderType, &o.ReduceOnly, &o.Qty, &o.NotionalUSD, &o.Leverage, &o.Status, &o.Source, &o.FilledPrice, &o.FilledAt, &o.SubmittedAt, &o.UpdatedAt); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}

@@ -21,7 +21,7 @@ interface MarketState {
 }
 
 export const useMarketStore = create<MarketState>((set) => ({
-  selectedSymbol: "BTCUSDT",
+  selectedSymbol: "BTC-USDT",
   setSelectedSymbol: (symbol) => set({ selectedSymbol: symbol }),
 
   candles: {},

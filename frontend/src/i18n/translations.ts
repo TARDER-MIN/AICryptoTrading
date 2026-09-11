@@ -9,7 +9,7 @@ export type Lang = "zh-TW" | "en";
 export const translations = {
   "zh-TW": {
     "app.title": "永續合約 AI 交易 Dashboard",
-    "app.subtitle": "Binance USDS-M Perpetual Futures · 5分K · 每筆固定保證金",
+    "app.subtitle": "BingX USDS-M Perpetual Futures · 5分K · 每筆固定保證金",
     "app.langToggle": "EN",
 
     "chart.header": "{{symbol}} - 5分K",
@@ -26,7 +26,7 @@ export const translations = {
     "watchlist.tradableTooltip": "目前設定可下單，約{{qty}}顆",
     "watchlist.chartOnlyTooltip": "以目前設定的保證金×槓桿換算，低於交易所最小下單量/名目金額限制，無法自動或手動下單（僅供看盤/訊號參考）",
     "watchlist.aiRationalePrefix": "AI選股理由（近期訊號次數：{{count}}）：{{rationale}}",
-    "watchlist.footnote": "「僅看盤」代表該合約在目前設定（{{sizing}}）下，交易所最小下單量/名目金額限制無法達成（例如BTCUSDT/ETHUSDT），系統只會顯示K線與AI訊號，不會自動或手動下單。",
+    "watchlist.footnote": "「僅看盤」代表該合約在目前設定（{{sizing}}）下，交易所最小下單量/名目金額限制無法達成（例如BTC-USDT/ETH-USDT），系統只會顯示K線與AI訊號，不會自動或手動下單。",
     "watchlist.footnoteSizingFallback": "保證金×槓桿",
     "watchlist.footnoteSizing": "{{margin}}USDT保證金×{{leverage}}x槓桿≈{{notional}}USDT",
 
@@ -124,7 +124,7 @@ export const translations = {
   },
   en: {
     "app.title": "Perpetual Futures AI Trading Dashboard",
-    "app.subtitle": "Binance USDS-M Perpetual Futures · 5m candles · fixed margin per order",
+    "app.subtitle": "BingX USDS-M Perpetual Futures · 5m candles · fixed margin per order",
     "app.langToggle": "中文",
 
     "chart.header": "{{symbol}} - 5m",
@@ -141,7 +141,7 @@ export const translations = {
     "watchlist.tradableTooltip": "Tradable at current settings, ~{{qty}} units",
     "watchlist.chartOnlyTooltip": "At the current margin x leverage, the exchange's minimum order size/notional can't be met - not tradable automatically or manually (chart/signals only).",
     "watchlist.aiRationalePrefix": "AI pick rationale (recent signal count: {{count}}): {{rationale}}",
-    "watchlist.footnote": "\"Chart only\" means this symbol can't clear the exchange's minimum order size/notional at the current settings ({{sizing}}) - e.g. BTCUSDT/ETHUSDT. The system will only show its chart and AI signals, never place an order for it.",
+    "watchlist.footnote": "\"Chart only\" means this symbol can't clear the exchange's minimum order size/notional at the current settings ({{sizing}}) - e.g. BTC-USDT/ETH-USDT. The system will only show its chart and AI signals, never place an order for it.",
     "watchlist.footnoteSizingFallback": "margin x leverage",
     "watchlist.footnoteSizing": "{{margin}} USDT margin x {{leverage}}x leverage ≈ {{notional}} USDT",
 

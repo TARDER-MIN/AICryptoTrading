@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"time"
 
-	"cryptotrading/internal/binance"
+	"cryptotrading/internal/bingx"
 	"cryptotrading/internal/models"
 	"cryptotrading/internal/settings"
 	"cryptotrading/internal/ws"
@@ -16,7 +16,7 @@ import (
 // execute is the ONLY path that turns an AI signal into a real automatic
 // order. Every guard here is deliberate and ordered cheapest-first: kill
 // switch, cooldown, daily cap, existing-position direction, then the
-// exchange-filter sizing check (binance.FilterCache.MaxQtyForCap) that can
+// exchange-filter sizing check (bingx.FilterCache.MaxQtyForCap) that can
 // never be bypassed regardless of what the AI/strategy suggested.
 func (t *Trader) execute(ctx context.Context, signal *models.AISignal) (decision models.AutoTradeDecision, reason string, orderID *int64) {
 	st, err := settings.Get(ctx, t.Pool)
@@ -45,7 +45,7 @@ func (t *Trader) execute(ctx context.Context, signal *models.AISignal) (decision
 			return models.DecisionSkipped, "already_holding_direction", nil
 		}
 		// Opposite-direction signal: the capped order below will partially
-		// reduce the existing position (Binance nets against it), not
+		// reduce the existing position (BingX nets against it), not
 		// aggressively flip it - the margin-based sizing keeps this bounded
 		// even for a larger existing position. Its stop-loss/take-profit
 		// (placed when it was first opened, see isFreshEntry below) uses
@@ -73,14 +73,14 @@ func (t *Trader) execute(ctx context.Context, signal *models.AISignal) (decision
 	}
 
 	clientOrderID := "auto" + strconv.FormatInt(time.Now().UnixNano(), 36)
-	resp, err := t.Binance.PlaceMarketOrder(ctx, symbol, side, sizing.Qty, false, clientOrderID)
+	resp, err := t.BingX.PlaceMarketOrder(ctx, symbol, side, sizing.Qty, false, clientOrderID)
 	if err != nil {
 		return models.DecisionError, fmt.Sprintf("place order: %v", err), nil
 	}
 
 	id, err := t.recordOrder(ctx, resp, symbol, side, sizing, st.Leverage, false, models.OrderSourceAuto)
 	if err != nil {
-		log.Printf("autotrader: order %d placed on Binance but failed to record locally: %v", resp.OrderID, err)
+		log.Printf("autotrader: order %d placed on BingX but failed to record locally: %v", resp.OrderID, err)
 	}
 	t.markOrderPlaced(symbol)
 
@@ -95,7 +95,7 @@ func (t *Trader) execute(ctx context.Context, signal *models.AISignal) (decision
 		// automatic path never rolls back or fails the entry over this -
 		// see its doc comment. AttachProtectiveOrders is the manual
 		// recovery path for when this does fail.
-		_, _ = t.placeProtectiveOrders(ctx, symbol, side, st.Leverage, *signal.StopLoss, *signal.TakeProfit)
+		_, _ = t.placeProtectiveOrders(ctx, symbol, side, sizing.Qty, st.Leverage, *signal.StopLoss, *signal.TakeProfit)
 	}
 
 	return models.DecisionExecuted, "", &id
@@ -104,13 +104,13 @@ func (t *Trader) execute(ctx context.Context, signal *models.AISignal) (decision
 // placeProtectiveOrders attaches STOP_MARKET/TAKE_PROFIT_MARKET
 // closePosition algo orders right after a fresh entry fills. A failure here
 // is logged but does not roll back or fail the entry - the position is
-// already open on Binance regardless; losing the protective order just
+// already open on BingX regardless; losing the protective order just
 // means it's temporarily unprotected until this is noticed (visible via the
-// missing rows in GET /api/account/orders, or Binance's own order history,
+// missing rows in GET /api/account/orders, or BingX's own order history,
 // or via AttachProtectiveOrders below). Returns the two placement errors
 // (nil on success) so a caller that needs to know - like AttachProtectiveOrders
 // - can react; the automatic entry-fill path above ignores them by design.
-func (t *Trader) placeProtectiveOrders(ctx context.Context, symbol string, entrySide models.OrderSide, leverage int, stopLoss, takeProfit float64) (stopErr, takeProfitErr error) {
+func (t *Trader) placeProtectiveOrders(ctx context.Context, symbol string, entrySide models.OrderSide, qty float64, leverage int, stopLoss, takeProfit float64) (stopErr, takeProfitErr error) {
 	closeSide := models.OrderSideSell
 	if entrySide == models.OrderSideSell {
 		closeSide = models.OrderSideBuy
@@ -125,7 +125,7 @@ func (t *Trader) placeProtectiveOrders(ctx context.Context, symbol string, entry
 		// leaving the position unprotected (see the log line below).
 		triggerPrice = t.Filters.RoundPrice(symbol, triggerPrice)
 		clientAlgoID := clientPrefix + strconv.FormatInt(time.Now().UnixNano(), 36)
-		resp, err := t.Binance.PlaceClosePositionAlgoOrder(ctx, symbol, closeSide, orderType, triggerPrice, clientAlgoID)
+		resp, err := t.BingX.PlaceClosePositionAlgoOrder(ctx, symbol, closeSide, qty, orderType, triggerPrice, clientAlgoID)
 		if err != nil {
 			log.Printf("autotrader: place %s for %s at %.8f failed (position is OPEN without this protection): %v", orderType, symbol, triggerPrice, err)
 			return err
@@ -157,7 +157,7 @@ func (t *Trader) AttachProtectiveOrders(ctx context.Context, symbol string, stop
 	if pos.Side == "short" {
 		entrySide = models.OrderSideSell
 	}
-	stopErr, takeProfitErr := t.placeProtectiveOrders(ctx, symbol, entrySide, pos.Leverage, stopLoss, takeProfit)
+	stopErr, takeProfitErr := t.placeProtectiveOrders(ctx, symbol, entrySide, pos.Qty, pos.Leverage, stopLoss, takeProfit)
 	if stopErr != nil || takeProfitErr != nil {
 		return fmt.Errorf("stop_loss error: %v, take_profit error: %v", stopErr, takeProfitErr)
 	}
@@ -188,7 +188,7 @@ func (t *Trader) PlaceManualOrder(ctx context.Context, symbol string, side model
 	}
 
 	clientOrderID := "manual" + strconv.FormatInt(time.Now().UnixNano(), 36)
-	resp, err := t.Binance.PlaceMarketOrder(ctx, symbol, side, sizing.Qty, false, clientOrderID)
+	resp, err := t.BingX.PlaceMarketOrder(ctx, symbol, side, sizing.Qty, false, clientOrderID)
 	if err != nil {
 		return nil, fmt.Errorf("place order: %w", err)
 	}
@@ -215,12 +215,12 @@ func (t *Trader) Flatten(ctx context.Context, symbol string) (*models.Order, err
 	}
 
 	clientOrderID := "flatten" + strconv.FormatInt(time.Now().UnixNano(), 36)
-	resp, err := t.Binance.PlaceMarketOrder(ctx, symbol, side, pos.Qty, true, clientOrderID)
+	resp, err := t.BingX.PlaceMarketOrder(ctx, symbol, side, pos.Qty, true, clientOrderID)
 	if err != nil {
 		return nil, fmt.Errorf("place flatten order: %w", err)
 	}
 
-	sizing := binance.SizingResult{Feasible: true, Qty: pos.Qty, NotionalUSD: pos.Qty * pos.MarkPrice}
+	sizing := bingx.SizingResult{Feasible: true, Qty: pos.Qty, NotionalUSD: pos.Qty * pos.MarkPrice}
 	id, err := t.recordOrder(ctx, resp, symbol, side, sizing, pos.Leverage, true, models.OrderSourceManual)
 	if err != nil {
 		return nil, err
@@ -236,10 +236,10 @@ func (t *Trader) ensureLeverage(ctx context.Context, symbol string, leverage int
 		return nil
 	}
 
-	if err := t.Binance.SetMarginType(ctx, symbol, marginType); err != nil {
+	if err := t.BingX.SetMarginType(ctx, symbol, marginType); err != nil {
 		return err
 	}
-	if err := t.Binance.SetLeverage(ctx, symbol, leverage); err != nil {
+	if err := t.BingX.SetLeverage(ctx, symbol, leverage); err != nil {
 		return err
 	}
 
@@ -263,7 +263,7 @@ func (t *Trader) latestPrice(ctx context.Context, symbol string) (float64, bool)
 	return candles[len(candles)-1].Close, true
 }
 
-func (t *Trader) recordOrder(ctx context.Context, resp *binance.OrderResponse, symbol string, side models.OrderSide, sizing binance.SizingResult, leverage int, reduceOnly bool, source models.OrderSource) (int64, error) {
+func (t *Trader) recordOrder(ctx context.Context, resp *bingx.OrderResponse, symbol string, side models.OrderSide, sizing bingx.SizingResult, leverage int, reduceOnly bool, source models.OrderSource) (int64, error) {
 	var id int64
 	err := t.Pool.QueryRow(ctx, `
 		INSERT INTO orders (binance_order_id, client_order_id, symbol, side, order_type, reduce_only, qty, notional_usd, leverage, status, source)
@@ -284,7 +284,7 @@ func (t *Trader) recordOrder(ctx context.Context, resp *binance.OrderResponse, s
 // order locally (algo_id set, binance_order_id left NULL - see migration
 // 0004). qty/notional are 0: closePosition orders carry no fixed quantity,
 // it's whatever the position size is at trigger time.
-func (t *Trader) recordAlgoOrder(ctx context.Context, resp *binance.AlgoOrderResponse, symbol string, side models.OrderSide, orderType string, leverage int) error {
+func (t *Trader) recordAlgoOrder(ctx context.Context, resp *bingx.AlgoOrderResponse, symbol string, side models.OrderSide, orderType string, leverage int) error {
 	var id int64
 	err := t.Pool.QueryRow(ctx, `
 		INSERT INTO orders (algo_id, client_order_id, symbol, side, order_type, reduce_only, qty, notional_usd, leverage, status, source)
@@ -306,7 +306,7 @@ func (t *Trader) loadOrder(ctx context.Context, id int64) (*models.Order, error)
 	err := t.Pool.QueryRow(ctx, `
 		SELECT id, binance_order_id, algo_id, client_order_id, symbol, side, order_type, reduce_only, qty, notional_usd, leverage, status, source, filled_price, filled_at, submitted_at, updated_at
 		FROM orders WHERE id = $1
-	`, id).Scan(&o.ID, &o.BinanceOrderID, &o.AlgoID, &o.ClientOrderID, &o.Symbol, &o.Side, &o.OrderType, &o.ReduceOnly, &o.Qty, &o.NotionalUSD, &o.Leverage, &o.Status, &o.Source, &o.FilledPrice, &o.FilledAt, &o.SubmittedAt, &o.UpdatedAt)
+	`, id).Scan(&o.ID, &o.BingXOrderID, &o.AlgoID, &o.ClientOrderID, &o.Symbol, &o.Side, &o.OrderType, &o.ReduceOnly, &o.Qty, &o.NotionalUSD, &o.Leverage, &o.Status, &o.Source, &o.FilledPrice, &o.FilledAt, &o.SubmittedAt, &o.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}

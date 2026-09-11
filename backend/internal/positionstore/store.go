@@ -1,8 +1,8 @@
-// Package positionstore holds the live, in-memory view of the real Binance
+// Package positionstore holds the live, in-memory view of the real BingX
 // account state (positions + balance) that the rest of the backend reads
 // from. It is hydrated once at startup via REST (GET /fapi/v2/account,
 // GET /fapi/v2/positionRisk) and kept current by the user-data-stream
-// ACCOUNT_UPDATE events - there is no Postgres table for this; Binance
+// ACCOUNT_UPDATE events - there is no Postgres table for this; BingX
 // itself is the source of truth, this is just a read-optimized cache so
 // every handler/decision path doesn't have to hit the exchange.
 package positionstore
