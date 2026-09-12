@@ -16,7 +16,7 @@ INSERT INTO strategy_params (id, params) VALUES (1, '{
     "min_fvg_size_pct": 0.1,
     "max_bars_for_sweep": 3,
     "stop_buffer_pct": 0.1,
-    "risk_reward_ratio": 2.0,
+    "risk_reward_ratio": 1.5,
     "sessions": [
         {"start_hour": 10, "start_minute": 0, "end_hour": 11, "end_minute": 0},
         {"start_hour": 14, "start_minute": 0, "end_hour": 15, "end_minute": 0}
