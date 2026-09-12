@@ -21,6 +21,8 @@ func LoadParams(ctx context.Context, pool *pgxpool.Pool) (SBParams, error) {
 		return DefaultSBParams(), err
 	}
 	backfillICT2026Defaults(&p)
+	// Risk/reward is a fixed strategy rule, not a tunable database value.
+	p.RiskRewardRatio = 1.5
 	return p, nil
 }
 
@@ -71,6 +73,9 @@ func backfillICT2026Defaults(p *SBParams) {
 // already-marshaled JSON by the caller to avoid an import cycle between
 // strategy and backtest).
 func SaveParams(ctx context.Context, pool *pgxpool.Pool, params SBParams, trainMetrics, validationMetrics []byte) error {
+	// Keep optimized and externally supplied parameter sets on the fixed
+	// 1:1.5 risk/reward rule as well.
+	params.RiskRewardRatio = 1.5
 	paramsJSON, err := json.Marshal(params)
 	if err != nil {
 		return err
