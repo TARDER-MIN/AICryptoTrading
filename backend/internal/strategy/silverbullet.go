@@ -96,7 +96,7 @@ func DefaultSBParams() SBParams {
 		MinFVGSizePct:   0.1,
 		MaxBarsForSweep: 3,
 		StopBufferPct:   0.1,
-		RiskRewardRatio: 2.0,
+		RiskRewardRatio: 1.5,
 
 		MinDisplacementBodyPct:   0.6,
 		MaxOpposingWickPct:       0.25,
