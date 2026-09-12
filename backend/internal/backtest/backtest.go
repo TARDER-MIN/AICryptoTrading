@@ -148,7 +148,10 @@ func Metrics(trades []Trade, from, to time.Time) Result {
 	if grossLoss > 0 {
 		res.ProfitFactor = grossWin / grossLoss
 	} else if grossWin > 0 {
-		res.ProfitFactor = math.Inf(1)
+		// Keep API responses valid JSON. encoding/json rejects +Inf; a
+		// finite cap communicates "no observed losses" without breaking
+		// the dashboard when a small sample contains only winners.
+		res.ProfitFactor = 999.0
 	}
 
 	mean := sumPnL / float64(len(subset))
