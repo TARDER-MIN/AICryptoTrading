@@ -146,7 +146,8 @@ func paramGrid() []strategy.SBParams {
 		for _, fvgPct := range []float64{0.05, 0.1, 0.2} {
 			for _, sweepBars := range []int{2, 3, 5} {
 				for _, stopBuf := range []float64{0.05, 0.1} {
-					for _, rr := range []float64{1.5, 2.0, 3.0} {
+					// Keep the strategy's risk/reward fixed at 1:1.5.
+					for _, rr := range []float64{1.5} {
 						p := base
 						p.SwingLookback = swing
 						p.MinFVGSizePct = fvgPct
