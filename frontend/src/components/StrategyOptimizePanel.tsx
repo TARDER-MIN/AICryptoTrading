@@ -121,6 +121,9 @@ export function StrategyOptimizePanel() {
             {t("strategyOptimize.sampleSummary", {
               days: report.history_days,
               count: report.symbols_tested.length,
+              candles: report.candles_tested.toLocaleString(),
+              start: new Date(report.history_start).toLocaleString(),
+              end: new Date(report.history_end).toLocaleString(),
             })}
             <br />
             {t("strategyOptimize.evaluatedSummary", {

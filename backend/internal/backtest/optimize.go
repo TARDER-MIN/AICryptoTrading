@@ -25,6 +25,9 @@ type OptimizeReport struct {
 	SplitTime           time.Time         `json:"split_time"`
 	HistoryDays         int               `json:"history_days,omitempty"`
 	SymbolsTested       []string          `json:"symbols_tested,omitempty"`
+	HistoryStart        time.Time         `json:"history_start,omitempty"`
+	HistoryEnd          time.Time         `json:"history_end,omitempty"`
+	CandlesTested       int               `json:"candles_tested,omitempty"`
 }
 
 // minValidationTrades/minValidationSharpe are the overfitting guard: a

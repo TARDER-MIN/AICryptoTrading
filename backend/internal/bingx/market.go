@@ -96,12 +96,17 @@ func parseAny(v any) float64 {
 }
 
 // KlinesRange fetches every kline between start and end (inclusive),
-// paginating past Binance's 1500-per-call limit via startTime/endTime -
+// paginating past BingX's 1000-per-call limit via startTime/endTime -
 // needed to pull enough history (weeks to months of 5m bars) for a
 // meaningful backtest train/validation split, far more than the single
 // SeedHistory call (limit-only, most-recent-N) used for live chart seeding.
 func (c *Client) KlinesRange(ctx context.Context, symbol, interval string, start, end time.Time) ([]models.Candle, error) {
-	const pageLimit = 1440
+	// BingX silently caps this endpoint at 1000 rows even when a larger limit
+	// is requested. Keep the requested page size equal to that actual cap so
+	// len(raw) < pageLimit remains a valid "last page" test. Using 1440 here
+	// made every 180-day request stop after only the latest ~3.5 days of 5m
+	// candles.
+	const pageLimit = 1000
 	var out []models.Candle
 	cursorEnd := end
 

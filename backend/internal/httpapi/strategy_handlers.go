@@ -180,6 +180,17 @@ func registerStrategyRoutes(g *gin.RouterGroup, d Deps) {
 		report := backtest.Optimize(candlesBySymbol, availableSymbols, optimizeTrainFraction)
 		report.HistoryDays = optimizeHistoryDays
 		report.SymbolsTested = availableSymbols
+		for _, symbol := range availableSymbols {
+			candles := candlesBySymbol[symbol]
+			report.CandlesTested += len(candles)
+			if report.HistoryStart.IsZero() || candles[0].Ts.Before(report.HistoryStart) {
+				report.HistoryStart = candles[0].Ts
+			}
+			last := candles[len(candles)-1].Ts
+			if report.HistoryEnd.IsZero() || last.After(report.HistoryEnd) {
+				report.HistoryEnd = last
+			}
+		}
 
 		trainJSON, _ := json.Marshal(report.Train)
 		validJSON, _ := json.Marshal(report.Validation)

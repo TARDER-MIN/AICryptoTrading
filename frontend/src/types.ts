@@ -196,6 +196,9 @@ export interface OptimizeReport {
   split_time: string;
   history_days: number;
   symbols_tested: string[];
+  history_start: string;
+  history_end: string;
+  candles_tested: number;
 }
 
 export interface FundingUpdate {
