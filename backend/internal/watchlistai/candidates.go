@@ -25,7 +25,7 @@ const (
 	DefaultPickCount     = 10
 
 	// SignalScanLookbackDays is how much recent history CountRecentSignals
-	// replays per candidate. Short on purpose (vs. the 60 days
+	// replays per candidate. Short on purpose (vs. the 180 days
 	// internal/httpapi.strategy_handlers.go uses for parameter tuning) -
 	// this only needs to rank candidates by "does the CURRENT live ruleset
 	// actually fire on this symbol lately", not produce a statistically

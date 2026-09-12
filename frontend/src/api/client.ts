@@ -78,7 +78,7 @@ export const api = {
 
   getStrategyParams: () => request<StrategyParamsResponse>("/strategy/params"),
   // Runs a full backtest + grid-search optimization against live-pulled
-  // history (60 days) - can take a while (deep history fetch + hundreds of
-  // backtest runs per symbol), so give it a generous client-side timeout.
+  // history (180 days across a 20-symbol crypto-only liquidity pool) - can
+  // take a while (deep history fetch + hundreds of backtest runs per symbol).
   optimizeStrategy: () => request<OptimizeReport>("/strategy/optimize", { method: "POST" }),
 };

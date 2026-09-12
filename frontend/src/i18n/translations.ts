@@ -101,7 +101,7 @@ export const translations = {
     "position.flattening": "平倉中…",
 
     "strategyOptimize.title": "Silver Bullet 策略調參",
-    "strategyOptimize.description": "用過去60天的歷史K線回測，網格搜尋參數組合，依「驗證期」(最近30%資料，模型從未拿來調參)的Sharpe排序——只有驗證期也表現夠好的參數組合才會被採用，避免overfitting。這是手動觸發的一次性動作，不會自動排程重跑。",
+    "strategyOptimize.description": "使用依 BingX 24小時成交額選出的20個高流動性加密永續合約，回測過去180天的歷史K線；實盤關注清單不受影響。系統網格搜尋參數組合，依「驗證期」(最近30%資料，模型從未拿來調參)的Sharpe排序——只有驗證期也表現夠好的參數組合才會被採用，避免overfitting。這是手動觸發的一次性動作，不會自動排程重跑。",
     "strategyOptimize.run": "執行回測並自動調參",
     "strategyOptimize.running": "回測+調參中（可能需要一段時間）...",
     "strategyOptimize.currentParams": "目前套用中的參數{{optimizedAt}}：",
@@ -117,6 +117,7 @@ export const translations = {
     "strategyOptimize.trainPeriod": "訓練期",
     "strategyOptimize.validationPeriod": "驗證期",
     "strategyOptimize.evaluatedSummary": "本次評估了{{evaluated}}組參數，{{passed}}組通過驗證期門檻（交易次數≥5且Sharpe>0）。切分時間點：{{splitTime}}",
+    "strategyOptimize.sampleSummary": "本次實際樣本：過去{{days}}天，共{{count}}個加密合約。",
     "strategyOptimize.tunedParamsSummary": "擺幅回看{{swing}}根 / FVG≥{{fvgPct}}% / sweep於{{sweepBars}}根內 / 停損緩衝{{stopBuf}}% / 風報比{{rr}}",
     "strategyOptimize.fixedRulesSummary": "位移實體≥{{dispPct}}% / OTE{{oteMin}}-{{oteMax}}% / Breaker重疊{{breakerReq}} / SMT背離{{smtReq}}",
     "strategyOptimize.required": "必要",
@@ -216,7 +217,7 @@ export const translations = {
     "position.flattening": "Flattening…",
 
     "strategyOptimize.title": "Silver Bullet Parameter Optimizer",
-    "strategyOptimize.description": "Backtests the last 60 days of history and grid-searches parameter combinations, ranking by validation-period Sharpe (the most recent 30% of data, never used for tuning) - only combinations that also perform well out-of-sample are adopted, guarding against overfitting. Manually triggered, one-shot - not on a recurring schedule.",
+    "strategyOptimize.description": "Uses the 20 most-liquid crypto perpetuals ranked by BingX 24h quote volume and backtests the last 180 days; the live watchlist is not changed. It grid-searches parameter combinations and ranks them by validation-period Sharpe (the most recent 30% of data, never used for tuning) - only combinations that also perform well out-of-sample are adopted, guarding against overfitting. Manually triggered, one-shot - not on a recurring schedule.",
     "strategyOptimize.run": "Run Backtest + Auto-Tune",
     "strategyOptimize.running": "Backtesting + tuning (may take a while)...",
     "strategyOptimize.currentParams": "Currently active parameters{{optimizedAt}}:",
@@ -232,6 +233,7 @@ export const translations = {
     "strategyOptimize.trainPeriod": "Training",
     "strategyOptimize.validationPeriod": "Validation",
     "strategyOptimize.evaluatedSummary": "Evaluated {{evaluated}} parameter sets, {{passed}} cleared the validation bar (trades ≥ 5 and Sharpe > 0). Split time: {{splitTime}}",
+    "strategyOptimize.sampleSummary": "Actual sample: {{days}} days across {{count}} crypto perpetuals.",
     "strategyOptimize.tunedParamsSummary": "swing lookback {{swing}} bars / FVG ≥ {{fvgPct}}% / sweep within {{sweepBars}} bars / stop buffer {{stopBuf}}% / R:R {{rr}}",
     "strategyOptimize.fixedRulesSummary": "displacement body ≥ {{dispPct}}% / OTE {{oteMin}}-{{oteMax}}% / Breaker overlap {{breakerReq}} / SMT divergence {{smtReq}}",
     "strategyOptimize.required": "required",

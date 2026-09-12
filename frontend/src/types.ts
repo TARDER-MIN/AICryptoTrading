@@ -194,6 +194,8 @@ export interface OptimizeReport {
   candidates_evaluated: number;
   candidates_passed: number;
   split_time: string;
+  history_days: number;
+  symbols_tested: string[];
 }
 
 export interface FundingUpdate {

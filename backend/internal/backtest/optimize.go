@@ -23,6 +23,8 @@ type OptimizeReport struct {
 	CandidatesEvaluated int               `json:"candidates_evaluated"`
 	CandidatesPassed    int               `json:"candidates_passed"`
 	SplitTime           time.Time         `json:"split_time"`
+	HistoryDays         int               `json:"history_days,omitempty"`
+	SymbolsTested       []string          `json:"symbols_tested,omitempty"`
 }
 
 // minValidationTrades/minValidationSharpe are the overfitting guard: a
@@ -45,7 +47,9 @@ const (
 // SMT divergence lookups even when the AI daily watchlist selection drops
 // them from the tradable set) - those are only ever read as SMT reference
 // data via strategy.AnchorSymbolFor, never simulated as a tradeable symbol
-// themselves. Every candidate is simulated with backtest.Run per tradable
+// themselves. The HTTP optimizer supplies an independent liquidity-ranked
+// crypto universe here; changing it does not alter the live watchlist. Every
+// candidate is simulated with backtest.Run per tradable
 // symbol; trades are pooled and split by EntryTs relative to the split
 // timestamp into train/validation Results. Candidates are ranked by
 // VALIDATION Sharpe (never training Sharpe) among those clearing the

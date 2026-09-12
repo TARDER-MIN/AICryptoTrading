@@ -2,21 +2,87 @@ package httpapi
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"slices"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"cryptotrading/internal/backtest"
+	"cryptotrading/internal/bingx"
 	"cryptotrading/internal/models"
 	"cryptotrading/internal/strategy"
 )
 
 const (
-	optimizeHistoryDays   = 60
+	optimizeHistoryDays   = 180
+	optimizeUniverseSize  = 20
 	optimizeTrainFraction = 0.7
 )
+
+// BingX also exposes stocks, forex, indices and commodities through the
+// perpetual-contract endpoints. Those instruments use the prefixes below and
+// must never enter this crypto-only strategy's optimization universe.
+var bingxNonCryptoPrefixes = []string{"NCCO", "NCFX", "NCSI", "NCSK"}
+
+// selectOptimizeSymbols builds an independent backtest universe from the most
+// liquid live BingX crypto perpetuals. It deliberately does not read or change
+// the user's live watchlist: tuning sample size and live-trading selection are
+// separate concerns.
+func selectOptimizeSymbols(contracts []bingx.ExchangeInfoSymbol, tickers []bingx.Ticker24hr, limit int) []string {
+	tradableCrypto := make(map[string]bool, len(contracts))
+	for _, contract := range contracts {
+		symbol := strings.ToUpper(contract.Symbol)
+		if contract.Status != "TRADING" || contract.ContractType != "PERPETUAL" || contract.QuoteAsset != "USDT" || isBingXNonCrypto(symbol) {
+			continue
+		}
+		tradableCrypto[symbol] = true
+	}
+
+	type rankedSymbol struct {
+		symbol      string
+		quoteVolume float64
+	}
+	ranked := make([]rankedSymbol, 0, len(tickers))
+	seen := make(map[string]bool, len(tickers))
+	for _, ticker := range tickers {
+		symbol := strings.ToUpper(ticker.Symbol)
+		quoteVolume := ticker.QuoteVolume.Float()
+		if !tradableCrypto[symbol] || seen[symbol] || ticker.LastPrice.Float() <= 0 || quoteVolume <= 0 {
+			continue
+		}
+		seen[symbol] = true
+		ranked = append(ranked, rankedSymbol{symbol: symbol, quoteVolume: quoteVolume})
+	}
+
+	sort.Slice(ranked, func(i, j int) bool {
+		if ranked[i].quoteVolume == ranked[j].quoteVolume {
+			return ranked[i].symbol < ranked[j].symbol
+		}
+		return ranked[i].quoteVolume > ranked[j].quoteVolume
+	})
+	if limit > 0 && len(ranked) > limit {
+		ranked = ranked[:limit]
+	}
+
+	symbols := make([]string, len(ranked))
+	for i, item := range ranked {
+		symbols[i] = item.symbol
+	}
+	return symbols
+}
+
+func isBingXNonCrypto(symbol string) bool {
+	for _, prefix := range bingxNonCryptoPrefixes {
+		if strings.HasPrefix(symbol, prefix) {
+			return true
+		}
+	}
+	return false
+}
 
 func registerStrategyRoutes(g *gin.RouterGroup, d Deps) {
 	g.GET("/strategy/params", func(c *gin.Context) {
@@ -37,8 +103,9 @@ func registerStrategyRoutes(g *gin.RouterGroup, d Deps) {
 		})
 	})
 
-	// POST /strategy/optimize pulls deep history for every enabled
-	// watchlist symbol, grid-searches Silver Bullet parameters against it
+	// POST /strategy/optimize pulls deep history for an independent pool of
+	// the 20 most-liquid BingX crypto perpetuals, grid-searches Silver Bullet
+	// parameters against it
 	// (train/validation split, ranked by VALIDATION Sharpe - see
 	// internal/backtest.Optimize for why), saves the winning set, and
 	// live-reloads the running autotrader.Trader so it takes effect
@@ -47,24 +114,19 @@ func registerStrategyRoutes(g *gin.RouterGroup, d Deps) {
 	g.POST("/strategy/optimize", func(c *gin.Context) {
 		ctx := c.Request.Context()
 
-		rows, err := d.Pool.Query(ctx, `SELECT symbol FROM watchlist WHERE enabled`)
+		contracts, err := d.BingX.ExchangeInfo(ctx)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadGateway, gin.H{"error": "list BingX contracts: " + err.Error()})
 			return
 		}
-		var symbols []string
-		for rows.Next() {
-			var s string
-			if err := rows.Scan(&s); err != nil {
-				rows.Close()
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-				return
-			}
-			symbols = append(symbols, s)
+		tickers, err := d.BingX.Ticker24hrAll(ctx)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "list BingX tickers: " + err.Error()})
+			return
 		}
-		rows.Close()
+		symbols := selectOptimizeSymbols(contracts, tickers, optimizeUniverseSize)
 		if len(symbols) == 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "watchlist is empty"})
+			c.JSON(http.StatusBadGateway, gin.H{"error": "no live crypto perpetuals available for backtesting"})
 			return
 		}
 
@@ -72,8 +134,8 @@ func registerStrategyRoutes(g *gin.RouterGroup, d Deps) {
 		start := end.AddDate(0, 0, -optimizeHistoryDays)
 
 		// Always fetch the SMT anchor symbols (strategy.AnchorSymbols) too,
-		// even if the AI daily watchlist selection dropped them from the
-		// tradable set - Optimize needs their history to backtest SMT
+		// even if either one falls outside the current top-20 tradable set -
+		// Optimize needs their history to backtest SMT
 		// divergence confirmation the same way live trading uses it.
 		fetchSet := append([]string{}, symbols...)
 		for _, a := range strategy.AnchorSymbols {
@@ -86,19 +148,38 @@ func registerStrategyRoutes(g *gin.RouterGroup, d Deps) {
 		for _, symbol := range fetchSet {
 			candles, err := d.BingX.KlinesRange(ctx, symbol, d.Cfg.KlineInterval, start, end)
 			if err != nil {
-				c.JSON(http.StatusBadGateway, gin.H{"error": "fetch history for " + symbol + ": " + err.Error()})
-				return
+				if slices.Contains(strategy.AnchorSymbols, symbol) {
+					c.JSON(http.StatusBadGateway, gin.H{"error": "fetch required SMT anchor history for " + symbol + ": " + err.Error()})
+					return
+				}
+				log.Printf("strategy optimize: skipping %s after history fetch failed: %v", symbol, err)
+				continue
 			}
-			if len(candles) > 0 {
-				candlesBySymbol[symbol] = candles
+			if len(candles) == 0 {
+				if slices.Contains(strategy.AnchorSymbols, symbol) {
+					c.JSON(http.StatusBadGateway, gin.H{"error": "no historical data returned for required SMT anchor " + symbol})
+					return
+				}
+				log.Printf("strategy optimize: skipping %s because no historical data was returned", symbol)
+				continue
+			}
+			candlesBySymbol[symbol] = candles
+		}
+
+		availableSymbols := make([]string, 0, len(symbols))
+		for _, symbol := range symbols {
+			if len(candlesBySymbol[symbol]) > 0 {
+				availableSymbols = append(availableSymbols, symbol)
 			}
 		}
-		if len(candlesBySymbol) == 0 {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "no historical data returned for any watchlist symbol"})
+		if len(availableSymbols) == 0 {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "no historical data returned for any optimization symbol"})
 			return
 		}
 
-		report := backtest.Optimize(candlesBySymbol, symbols, optimizeTrainFraction)
+		report := backtest.Optimize(candlesBySymbol, availableSymbols, optimizeTrainFraction)
+		report.HistoryDays = optimizeHistoryDays
+		report.SymbolsTested = availableSymbols
 
 		trainJSON, _ := json.Marshal(report.Train)
 		validJSON, _ := json.Marshal(report.Validation)

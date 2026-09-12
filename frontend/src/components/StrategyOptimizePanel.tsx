@@ -118,6 +118,11 @@ export function StrategyOptimizePanel() {
       {report && (
         <div style={{ marginTop: 12 }}>
           <p className="muted small">
+            {t("strategyOptimize.sampleSummary", {
+              days: report.history_days,
+              count: report.symbols_tested.length,
+            })}
+            <br />
             {t("strategyOptimize.evaluatedSummary", {
               evaluated: report.candidates_evaluated,
               passed: report.candidates_passed,
