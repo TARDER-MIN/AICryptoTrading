@@ -167,16 +167,27 @@ export interface BacktestMetrics {
   total_trades: number;
   win_count: number;
   win_rate: number;
+  gross_return_pct: number;
+  fee_cost_pct: number;
+  slippage_cost_pct: number;
+  funding_cost_pct: number;
+  total_trading_cost_pct: number;
   total_return_pct: number;
   sharpe: number;
   max_drawdown_pct: number;
   profit_factor: number;
+  taker_fee_pct_per_side: number;
+  estimated_slippage_pct_per_side: number;
+  funding_included: boolean;
+  funding_source: string;
+  fee_source: string;
 }
 
 export interface StrategyParamsResponse {
   params: SBParams;
   train_metrics: BacktestMetrics | null;
   validation_metrics: BacktestMetrics | null;
+  test_metrics: BacktestMetrics | null;
   optimized_at: string | null;
 }
 
@@ -190,11 +201,21 @@ export interface OptimizeReport {
   best_params: SBParams;
   train_metrics: BacktestMetrics;
   validation_metrics: BacktestMetrics;
+  test_metrics: BacktestMetrics;
+  cost_model: {
+    taker_fee_pct_per_side: number;
+    estimated_slippage_pct_per_side: number;
+    funding_included: boolean;
+    funding_source: string;
+    fee_source: string;
+  };
   top_candidates: OptimizeCandidate[];
   candidates_evaluated: number;
   candidates_passed: number;
-  split_time: string;
+  train_end: string;
+  test_start: string;
   history_days: number;
+  history_available_days: number;
   symbols_tested: string[];
   history_start: string;
   history_end: string;

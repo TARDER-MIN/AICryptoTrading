@@ -69,3 +69,48 @@ func TestKlinesRangePaginatesAtBingXActualLimit(t *testing.T) {
 		t.Fatalf("range = %s..%s, want %s..%s", got[0].Ts, got[len(got)-1].Ts, start, end)
 	}
 }
+
+func TestFundingRatesRangeParsesAndSortsHistoricalSettlements(t *testing.T) {
+	start := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(24 * time.Hour)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/openApi/swap/v2/quote/fundingRate" {
+			t.Errorf("path = %q, want funding-rate endpoint", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("symbol"); got != "BTC-USDT" {
+			t.Errorf("symbol = %q, want BTC-USDT", got)
+		}
+		if got := r.URL.Query().Get("startTime"); got != strconv.FormatInt(start.UnixMilli(), 10) {
+			t.Errorf("startTime = %q", got)
+		}
+		if got := r.URL.Query().Get("endTime"); got != strconv.FormatInt(end.UnixMilli(), 10) {
+			t.Errorf("endTime = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code": 0,
+			"msg":  "",
+			// BingX returns newest first and numbers as strings.
+			"data": []map[string]any{
+				{"symbol": "BTC-USDT", "fundingRate": "-0.0002", "fundingTime": start.Add(16 * time.Hour).UnixMilli(), "markPrice": "102"},
+				{"symbol": "BTC-USDT", "fundingRate": "0.0001", "fundingTime": start.Add(8 * time.Hour).UnixMilli(), "markPrice": "101"},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient("", "", server.URL, "")
+	got, err := client.FundingRatesRange(context.Background(), "BTC-USDT", start, end)
+	if err != nil {
+		t.Fatalf("FundingRatesRange() error = %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("event count = %d, want 2", len(got))
+	}
+	if !got[0].Time.Equal(start.Add(8*time.Hour)) || got[0].Rate != 0.0001 || got[0].MarkPrice != 101 {
+		t.Errorf("first event = %+v", got[0])
+	}
+	if !got[1].Time.Equal(start.Add(16*time.Hour)) || got[1].Rate != -0.0002 || got[1].MarkPrice != 102 {
+		t.Errorf("second event = %+v", got[1])
+	}
+}

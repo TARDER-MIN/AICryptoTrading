@@ -144,7 +144,7 @@ func AnnotateSignalFrequency(ctx context.Context, bclient *bingx.Client, candida
 			continue
 		}
 		anchor := anchorCandles[strategy.AnchorSymbolFor(c.Symbol)]
-		trades := backtest.Run(candles, anchor, params)
+		trades := backtest.Run(candles, anchor, params, backtest.CostModel{}, nil)
 		out[i].RecentSignalCount = len(trades)
 	}
 	return out

@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"slices"
 	"testing"
+	"time"
 
 	"cryptotrading/internal/bingx"
+	"cryptotrading/internal/models"
 )
 
 func TestSelectOptimizeSymbolsRanksCryptoAndExcludesTradFi(t *testing.T) {
@@ -38,5 +40,23 @@ func TestSelectOptimizeSymbolsRanksCryptoAndExcludesTradFi(t *testing.T) {
 	want := []string{"SOL-USDT", "ETH-USDT"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("selectOptimizeSymbols() = %v, want %v", got, want)
+	}
+}
+
+func TestFundingHistoryCoversCandleSample(t *testing.T) {
+	start := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+	candles := []models.Candle{{Ts: start}, {Ts: start.Add(48 * time.Hour)}}
+
+	complete := []bingx.FundingRateEvent{
+		{Time: start.Add(8 * time.Hour)},
+		{Time: start.Add(40 * time.Hour)},
+	}
+	if !fundingHistoryCovers(candles, complete) {
+		t.Fatal("expected complete history to cover candle sample")
+	}
+
+	partial := []bingx.FundingRateEvent{{Time: start.Add(30 * time.Hour)}}
+	if fundingHistoryCovers(candles, partial) {
+		t.Fatal("expected recent-only funding history to be rejected")
 	}
 }

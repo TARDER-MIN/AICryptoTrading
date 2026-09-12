@@ -25,6 +25,13 @@ type Config struct {
 	ListenKeyKeepaliveMin int
 	MaxAutoOrdersPerDay   int
 
+	// Backtest costs are percentage points per executed side. The live
+	// strategy enters at market and exits through market-trigger orders, so
+	// the optimizer treats both legs as taker fills and adds an explicit
+	// slippage estimate. These affect backtests only, never live order size.
+	BacktestTakerFeePct float64
+	BacktestSlippagePct float64
+
 	// WatchlistAIRefreshHourUTC is the hour (0-23, UTC) the daily AI
 	// watchlist-selection scheduler fires. No weekday skip - crypto
 	// perpetuals trade every day.
@@ -56,9 +63,11 @@ func Load() Config {
 		LeverageDefault:       getenvInt("LEVERAGE_DEFAULT", 3),
 		MarginUSD:             getenvFloat("MARGIN_USD", 5.0),
 		MarginType:            getenv("MARGIN_TYPE", "ISOLATED"),
-		AutotradeEnabledInit:  getenvBool("AUTOTRADE_ENABLED_DEFAULT", true),
+		AutotradeEnabledInit:  getenvBool("AUTOTRADE_ENABLED_DEFAULT", false),
 		ListenKeyKeepaliveMin: getenvInt("LISTEN_KEY_KEEPALIVE_MINUTES", 30),
 		MaxAutoOrdersPerDay:   getenvInt("MAX_AUTO_ORDERS_PER_DAY", 20),
+		BacktestTakerFeePct:   getenvNonNegativeFloat("BACKTEST_TAKER_FEE_PCT", 0.05),
+		BacktestSlippagePct:   getenvNonNegativeFloat("BACKTEST_SLIPPAGE_PCT", 0.02),
 
 		WatchlistAIRefreshHourUTC: getenvInt("WATCHLIST_AI_REFRESH_HOUR_UTC", 0),
 
@@ -101,6 +110,14 @@ func getenvFloat(key string, fallback float64) float64 {
 		}
 	}
 	return fallback
+}
+
+func getenvNonNegativeFloat(key string, fallback float64) float64 {
+	value := getenvFloat(key, fallback)
+	if value < 0 {
+		return fallback
+	}
+	return value
 }
 
 func getenvBool(key string, fallback bool) bool {

@@ -67,6 +67,38 @@ Other important settings are documented in `.env.example`, including
 `MARGIN_USD`, `LEVERAGE_DEFAULT`, `MARGIN_TYPE`, and
 `AUTOTRADE_ENABLED_DEFAULT`.
 
+## Backtest interpretation
+
+The optimizer requests up to 180 days from BingX, but the perpetual-futures
+5-minute endpoint currently returns only about 45 days. The dashboard always
+shows the actual first/last timestamps and candle count; it never substitutes
+spot candles for missing futures history.
+
+Each run uses the current 20 most-liquid crypto perpetuals and splits the
+available time range into 60% training, 20% parameter-selection validation,
+and a final untouched 20% test. A trade crossing a split boundary is excluded
+from the earlier interval so future exit prices cannot leak backward. The
+reported return, Sharpe, profit factor, and drawdown use net per-trade returns
+after the configured taker-fee and slippage assumptions:
+
+```dotenv
+BACKTEST_TAKER_FEE_PCT=0.05
+BACKTEST_SLIPPAGE_PCT=0.02
+```
+
+Those values are percentage points per side, so the defaults deduct about
+0.14% for a complete entry/exit. When credentials are available, the
+optimizer replaces the configured fee with the account's current BingX taker
+rate. It also fetches BingX's historical funding settlements and applies each
+one crossed by a simulated position using its settlement mark price. A
+positive funding-cost value is paid by the position; a negative value is
+funding income. If complete funding history is unavailable for any tested
+symbol, funding is omitted for every symbol and the dashboard says so rather
+than mixing unlike cost coverage. Return and drawdown are cumulative
+unleveraged price-return percentage points, not account-equity returns. The
+current-volume universe also introduces selection bias, so even the final-test
+result is evidence, not a promise of future profitability.
+
 ## Safety model
 
 Every manual and automatic order is sized through the exchange filter cache.

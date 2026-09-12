@@ -4,13 +4,29 @@ import { useI18n } from "../i18n/I18nContext";
 import type { BacktestMetrics, OptimizeReport, SBParams } from "../types";
 
 function MetricsRow({ label, m }: { label: string; m: BacktestMetrics | null | undefined }) {
+  const { t } = useI18n();
   if (!m) return null;
+  const hasCostBreakdown = Number.isFinite(m.gross_return_pct) && Number.isFinite(m.total_trading_cost_pct);
+  const gross = hasCostBreakdown ? m.gross_return_pct : m.total_return_pct;
+  const costs = hasCostBreakdown ? m.total_trading_cost_pct : null;
   return (
     <tr>
       <td>{label}</td>
       <td>{m.total_trades}</td>
       <td>{m.win_rate.toFixed(1)}%</td>
+      <td className={gross >= 0 ? "buy" : "sell"}>{gross.toFixed(2)}%</td>
+      <td>
+        {costs === null
+          ? "—"
+          : t("strategyOptimize.costBreakdown", {
+              total: costs.toFixed(2),
+              fee: m.fee_cost_pct.toFixed(2),
+              slippage: m.slippage_cost_pct.toFixed(2),
+              funding: m.funding_cost_pct.toFixed(2),
+            })}
+      </td>
       <td className={m.total_return_pct >= 0 ? "buy" : "sell"}>{m.total_return_pct.toFixed(2)}%</td>
+      <td>{m.profit_factor.toFixed(2)}</td>
       <td>{m.sharpe.toFixed(2)}</td>
       <td>{m.max_drawdown_pct.toFixed(2)}%</td>
     </tr>
@@ -23,7 +39,13 @@ function MetricsRow({ label, m }: { label: string; m: BacktestMetrics | null | u
 // the user's explicit choice, not a recurring scheduled job.
 export function StrategyOptimizePanel() {
   const { t } = useI18n();
-  const [current, setCurrent] = useState<{ params: SBParams; train: BacktestMetrics | null; validation: BacktestMetrics | null; optimizedAt: string | null } | null>(null);
+  const [current, setCurrent] = useState<{
+    params: SBParams;
+    train: BacktestMetrics | null;
+    validation: BacktestMetrics | null;
+    test: BacktestMetrics | null;
+    optimizedAt: string | null;
+  } | null>(null);
   const [report, setReport] = useState<OptimizeReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -50,7 +72,13 @@ export function StrategyOptimizePanel() {
     api
       .getStrategyParams()
       .then((res) =>
-        setCurrent({ params: res.params, train: res.train_metrics, validation: res.validation_metrics, optimizedAt: res.optimized_at }),
+        setCurrent({
+          params: res.params,
+          train: res.train_metrics,
+          validation: res.validation_metrics,
+          test: res.test_metrics,
+          optimizedAt: res.optimized_at,
+        }),
       )
       .catch(() => undefined);
   };
@@ -92,7 +120,7 @@ export function StrategyOptimizePanel() {
             <br />
             {t("strategyOptimize.fixedRulesLabel", { rules: fixedRulesSummary(current.params) })}
           </p>
-          {(current.train || current.validation) && (
+          {(current.train || current.validation || current.test) && (
             <div className="table-scroll">
               <table>
                 <thead>
@@ -100,7 +128,10 @@ export function StrategyOptimizePanel() {
                     <th>{t("strategyOptimize.colPeriod")}</th>
                     <th>{t("strategyOptimize.colTrades")}</th>
                     <th>{t("strategyOptimize.colWinRate")}</th>
-                    <th>{t("strategyOptimize.colReturn")}</th>
+                    <th>{t("strategyOptimize.colGrossReturn")}</th>
+                    <th>{t("strategyOptimize.colCosts")}</th>
+                    <th>{t("strategyOptimize.colNetReturn")}</th>
+                    <th>{t("strategyOptimize.colProfitFactor")}</th>
                     <th>{t("strategyOptimize.colSharpe")}</th>
                     <th>{t("strategyOptimize.colDrawdown")}</th>
                   </tr>
@@ -108,8 +139,11 @@ export function StrategyOptimizePanel() {
                 <tbody>
                   <MetricsRow label={t("strategyOptimize.trainPeriod")} m={current.train} />
                   <MetricsRow label={t("strategyOptimize.validationPeriod")} m={current.validation} />
+                  <MetricsRow label={t("strategyOptimize.testPeriod")} m={current.test} />
                 </tbody>
               </table>
+              {!current.test && <p className="muted small">{t("strategyOptimize.legacyMetricsWarning")}</p>}
+              <p className="muted small">{t("strategyOptimize.metricsFootnote")}</p>
             </div>
           )}
         </div>
@@ -120,16 +154,32 @@ export function StrategyOptimizePanel() {
           <p className="muted small">
             {t("strategyOptimize.sampleSummary", {
               days: report.history_days,
+              actualDays: report.history_available_days.toFixed(1),
               count: report.symbols_tested.length,
               candles: report.candles_tested.toLocaleString(),
               start: new Date(report.history_start).toLocaleString(),
               end: new Date(report.history_end).toLocaleString(),
             })}
             <br />
+            {t("strategyOptimize.costSummary", {
+              fee: report.cost_model.taker_fee_pct_per_side,
+              slippage: report.cost_model.estimated_slippage_pct_per_side,
+              roundTrip: ((report.cost_model.taker_fee_pct_per_side + report.cost_model.estimated_slippage_pct_per_side) * 2).toFixed(2),
+              feeSource:
+                report.cost_model.fee_source === "bingx_account"
+                  ? t("strategyOptimize.feeSourceAccount")
+                  : t("strategyOptimize.feeSourceFallback"),
+              funding:
+                report.cost_model.funding_included && report.cost_model.funding_source === "bingx_history"
+                  ? t("strategyOptimize.fundingHistoryIncluded")
+                  : t("strategyOptimize.notIncluded"),
+            })}
+            <br />
             {t("strategyOptimize.evaluatedSummary", {
               evaluated: report.candidates_evaluated,
               passed: report.candidates_passed,
-              splitTime: new Date(report.split_time).toLocaleString(),
+              trainEnd: new Date(report.train_end).toLocaleString(),
+              testStart: new Date(report.test_start).toLocaleString(),
             })}
           </p>
         </div>

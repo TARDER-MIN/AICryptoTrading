@@ -18,9 +18,10 @@ import (
 )
 
 const (
-	optimizeHistoryDays   = 180
-	optimizeUniverseSize  = 20
-	optimizeTrainFraction = 0.7
+	optimizeHistoryDays        = 180
+	optimizeUniverseSize       = 20
+	optimizeTrainFraction      = 0.6
+	optimizeValidationFraction = 0.2
 )
 
 // BingX also exposes stocks, forex, indices and commodities through the
@@ -84,6 +85,19 @@ func isBingXNonCrypto(symbol string) bool {
 	return false
 }
 
+// fundingHistoryCovers checks that the returned settlement sequence reaches
+// both ends of the candle sample. A one-day tolerance is deliberately wider
+// than BingX's normal/dynamic settlement intervals while still detecting an
+// endpoint that returned only a recent partial history.
+func fundingHistoryCovers(candles []models.Candle, rates []bingx.FundingRateEvent) bool {
+	if len(candles) == 0 || len(rates) == 0 {
+		return false
+	}
+	const maxCoverageGap = 24 * time.Hour
+	return !rates[0].Time.After(candles[0].Ts.Add(maxCoverageGap)) &&
+		!rates[len(rates)-1].Time.Before(candles[len(candles)-1].Ts.Add(-maxCoverageGap))
+}
+
 func registerStrategyRoutes(g *gin.RouterGroup, d Deps) {
 	g.GET("/strategy/params", func(c *gin.Context) {
 		params, err := strategy.LoadParams(c.Request.Context(), d.Pool)
@@ -92,21 +106,23 @@ func registerStrategyRoutes(g *gin.RouterGroup, d Deps) {
 			return
 		}
 
-		var trainMetrics, validationMetrics json.RawMessage
+		var trainMetrics, validationMetrics, testMetrics json.RawMessage
 		var optimizedAt *time.Time
 		_ = d.Pool.QueryRow(c.Request.Context(), `
-			SELECT train_metrics, validation_metrics, optimized_at FROM strategy_params WHERE id = 1
-		`).Scan(&trainMetrics, &validationMetrics, &optimizedAt)
+			SELECT train_metrics, validation_metrics, test_metrics, optimized_at FROM strategy_params WHERE id = 1
+		`).Scan(&trainMetrics, &validationMetrics, &testMetrics, &optimizedAt)
 
 		c.JSON(http.StatusOK, gin.H{
-			"params": params, "train_metrics": trainMetrics, "validation_metrics": validationMetrics, "optimized_at": optimizedAt,
+			"params": params, "train_metrics": trainMetrics, "validation_metrics": validationMetrics,
+			"test_metrics": testMetrics, "optimized_at": optimizedAt,
 		})
 	})
 
 	// POST /strategy/optimize pulls deep history for an independent pool of
 	// the 20 most-liquid BingX crypto perpetuals, grid-searches Silver Bullet
 	// parameters against it
-	// (train/validation split, ranked by VALIDATION Sharpe - see
+	// (train/selection-validation/final-test split, ranked only by
+	// selection-validation Sharpe - see
 	// internal/backtest.Optimize for why), saves the winning set, and
 	// live-reloads the running autotrader.Trader so it takes effect
 	// immediately without a restart. Manually triggered and can take a
@@ -177,7 +193,66 @@ func registerStrategyRoutes(g *gin.RouterGroup, d Deps) {
 			return
 		}
 
-		report := backtest.Optimize(candlesBySymbol, availableSymbols, optimizeTrainFraction)
+		// Fetch settlement-by-settlement funding for the same perpetual
+		// contracts and date range. Never mix partial coverage into the
+		// report: if any symbol fails, omit funding for every symbol and say
+		// so through CostModel.FundingIncluded instead of presenting unlike
+		// cost bases as comparable results. The endpoint is rate-limited to
+		// 1 request/s per IP, hence the deliberate spacing.
+		fundingBySymbol := make(map[string][]backtest.FundingEvent, len(availableSymbols))
+		fundingComplete := true
+		for i, symbol := range availableSymbols {
+			if i > 0 {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(1100 * time.Millisecond):
+				}
+			}
+			candles := candlesBySymbol[symbol]
+			rates, err := d.BingX.FundingRatesRange(ctx, symbol, candles[0].Ts, candles[len(candles)-1].Ts)
+			if err != nil || !fundingHistoryCovers(candles, rates) {
+				if err != nil {
+					log.Printf("strategy optimize: historical funding unavailable for %s; omitting funding from the entire report: %v", symbol, err)
+				} else {
+					log.Printf("strategy optimize: incomplete historical funding coverage for %s; omitting funding from the entire report", symbol)
+				}
+				fundingComplete = false
+				fundingBySymbol = nil
+				break
+			}
+			converted := make([]backtest.FundingEvent, 0, len(rates))
+			for _, rate := range rates {
+				converted = append(converted, backtest.FundingEvent{
+					Ts: rate.Time, Rate: rate.Rate, MarkPrice: rate.MarkPrice,
+				})
+			}
+			fundingBySymbol[symbol] = converted
+		}
+
+		takerFeePct := d.Cfg.BacktestTakerFeePct
+		feeSource := "env_fallback"
+		if commission, err := d.BingX.UserCommissionRate(ctx); err != nil {
+			log.Printf("strategy optimize: account-specific commission unavailable; using configured %.4f%% taker fee per side: %v", takerFeePct, err)
+		} else {
+			takerFeePct = commission.TakerCommissionRate * 100
+			feeSource = "bingx_account"
+		}
+
+		costs := backtest.CostModel{
+			TakerFeePctPerSide:          takerFeePct,
+			EstimatedSlippagePctPerSide: d.Cfg.BacktestSlippagePct,
+			FundingIncluded:             fundingComplete,
+			FundingSource:               "bingx_history",
+			FeeSource:                   feeSource,
+		}
+		if !fundingComplete {
+			costs.FundingSource = "unavailable"
+		}
+		report := backtest.Optimize(
+			candlesBySymbol, fundingBySymbol, availableSymbols,
+			optimizeTrainFraction, optimizeValidationFraction, costs,
+		)
 		report.HistoryDays = optimizeHistoryDays
 		report.SymbolsTested = availableSymbols
 		for _, symbol := range availableSymbols {
@@ -191,10 +266,14 @@ func registerStrategyRoutes(g *gin.RouterGroup, d Deps) {
 				report.HistoryEnd = last
 			}
 		}
+		if report.HistoryEnd.After(report.HistoryStart) {
+			report.HistoryAvailableDays = report.HistoryEnd.Sub(report.HistoryStart).Hours() / 24
+		}
 
 		trainJSON, _ := json.Marshal(report.Train)
 		validJSON, _ := json.Marshal(report.Validation)
-		if err := strategy.SaveParams(ctx, d.Pool, report.Best, trainJSON, validJSON); err != nil {
+		testJSON, _ := json.Marshal(report.Test)
+		if err := strategy.SaveParams(ctx, d.Pool, report.Best, trainJSON, validJSON, testJSON); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}

@@ -7,37 +7,42 @@ import (
 	"cryptotrading/internal/strategy"
 )
 
-// Candidate is one grid-search point plus its train/validation performance,
-// kept for the "top candidates" transparency report.
+// Candidate is one grid-search point plus its train/selection-validation
+// performance, kept for the "top candidates" transparency report. Test is
+// intentionally omitted from JSON and never participates in ranking.
 type Candidate struct {
 	Params     strategy.SBParams `json:"params"`
 	Train      Result            `json:"train"`
 	Validation Result            `json:"validation"`
+	test       Result
 }
 
 type OptimizeReport struct {
-	Best                strategy.SBParams `json:"best_params"`
-	Train               Result            `json:"train_metrics"`
-	Validation          Result            `json:"validation_metrics"`
-	TopCandidates       []Candidate       `json:"top_candidates"`
-	CandidatesEvaluated int               `json:"candidates_evaluated"`
-	CandidatesPassed    int               `json:"candidates_passed"`
-	SplitTime           time.Time         `json:"split_time"`
-	HistoryDays         int               `json:"history_days,omitempty"`
-	SymbolsTested       []string          `json:"symbols_tested,omitempty"`
-	HistoryStart        time.Time         `json:"history_start,omitempty"`
-	HistoryEnd          time.Time         `json:"history_end,omitempty"`
-	CandlesTested       int               `json:"candles_tested,omitempty"`
+	Best                 strategy.SBParams `json:"best_params"`
+	Train                Result            `json:"train_metrics"`
+	Validation           Result            `json:"validation_metrics"`
+	Test                 Result            `json:"test_metrics"`
+	CostModel            CostModel         `json:"cost_model"`
+	TopCandidates        []Candidate       `json:"top_candidates"`
+	CandidatesEvaluated  int               `json:"candidates_evaluated"`
+	CandidatesPassed     int               `json:"candidates_passed"`
+	TrainEnd             time.Time         `json:"train_end"`
+	TestStart            time.Time         `json:"test_start"`
+	HistoryDays          int               `json:"history_days,omitempty"`
+	HistoryAvailableDays float64           `json:"history_available_days,omitempty"`
+	SymbolsTested        []string          `json:"symbols_tested,omitempty"`
+	HistoryStart         time.Time         `json:"history_start,omitempty"`
+	HistoryEnd           time.Time         `json:"history_end,omitempty"`
+	CandlesTested        int               `json:"candles_tested,omitempty"`
 }
 
 // minValidationTrades/minValidationSharpe are the overfitting guard: a
 // parameter set is only eligible for selection if it produced enough
-// validation-period trades to be statistically meaningful and was
-// profitable (in the Sharpe sense) on data the grid search never "saw" as
-// an optimization target - the actual defense against picking a set that
-// merely curve-fits the training window.
+// selection-validation trades and was profitable in the per-trade Sharpe
+// sense. This middle segment is intentionally used for model selection; the
+// later test segment is the only interval the selection process never sees.
 const (
-	minValidationTrades = 5
+	minValidationTrades = 10
 	minValidationSharpe = 0.0
 )
 
@@ -54,14 +59,22 @@ const (
 // crypto universe here; changing it does not alter the live watchlist. Every
 // candidate is simulated with backtest.Run per tradable
 // symbol; trades are pooled and split by EntryTs relative to the split
-// timestamp into train/validation Results. Candidates are ranked by
-// VALIDATION Sharpe (never training Sharpe) among those clearing the
-// minimum trade-count/Sharpe bar - this is what makes the result
-// meaningfully out-of-sample rather than just the best-fitting curve on
-// data the search directly optimized against.
-func Optimize(candlesBySymbol map[string][]models.Candle, tradableSymbols []string, trainFrac float64) OptimizeReport {
-	minTs, maxTs := timeRange(candlesBySymbol)
-	splitTs := minTs.Add(time.Duration(float64(maxTs.Sub(minTs)) * trainFrac))
+// timestamp into training, selection-validation, and final-test Results.
+// Candidates are ranked only by selection-validation Sharpe among those
+// clearing the minimum trade-count/Sharpe bar. The final test interval is
+// reported only after the winner is fixed; it is never used to rank or
+// filter candidates.
+func Optimize(candlesBySymbol map[string][]models.Candle, fundingBySymbol map[string][]FundingEvent, tradableSymbols []string, trainFrac, validationFrac float64, costs CostModel) OptimizeReport {
+	minTs, maxTs := timeRange(candlesBySymbol, tradableSymbols)
+	if minTs.IsZero() || maxTs.IsZero() || !maxTs.After(minTs) {
+		return OptimizeReport{Best: strategy.DefaultSBParams(), CostModel: costs.normalized()}
+	}
+	if trainFrac <= 0 || validationFrac <= 0 || trainFrac+validationFrac >= 1 {
+		trainFrac, validationFrac = 0.6, 0.2
+	}
+	trainEnd := minTs.Add(time.Duration(float64(maxTs.Sub(minTs)) * trainFrac))
+	testStart := minTs.Add(time.Duration(float64(maxTs.Sub(minTs)) * (trainFrac + validationFrac)))
+	costs = costs.normalized()
 
 	var candidates []Candidate
 	for _, p := range paramGrid() {
@@ -72,14 +85,18 @@ func Optimize(candlesBySymbol map[string][]models.Candle, tradableSymbols []stri
 				continue
 			}
 			anchorCandles := candlesBySymbol[strategy.AnchorSymbolFor(symbol)]
-			allTrades = append(allTrades, Run(candles, anchorCandles, p)...)
+			allTrades = append(allTrades, Run(candles, anchorCandles, p, costs, fundingBySymbol[symbol])...)
 		}
-		train := Metrics(allTrades, time.Time{}, splitTs)
-		valid := Metrics(allTrades, splitTs, time.Time{})
-		candidates = append(candidates, Candidate{Params: p, Train: train, Validation: valid})
+		train := Metrics(allTrades, time.Time{}, trainEnd, costs)
+		valid := Metrics(allTrades, trainEnd, testStart, costs)
+		test := Metrics(allTrades, testStart, time.Time{}, costs)
+		candidates = append(candidates, Candidate{Params: p, Train: train, Validation: valid, test: test})
 	}
 
-	report := OptimizeReport{SplitTime: splitTs, CandidatesEvaluated: len(candidates)}
+	report := OptimizeReport{
+		CostModel: costs, TrainEnd: trainEnd, TestStart: testStart,
+		CandidatesEvaluated: len(candidates),
+	}
 
 	var passing []Candidate
 	for _, c := range candidates {
@@ -104,6 +121,7 @@ func Optimize(candlesBySymbol map[string][]models.Candle, tradableSymbols []stri
 		report.Best = best.Params
 		report.Train = best.Train
 		report.Validation = best.Validation
+		report.Test = best.test
 	} else {
 		report.Best = strategy.DefaultSBParams()
 	}
@@ -114,8 +132,9 @@ func Optimize(candlesBySymbol map[string][]models.Candle, tradableSymbols []stri
 	return report
 }
 
-func timeRange(candlesBySymbol map[string][]models.Candle) (min, max time.Time) {
-	for _, candles := range candlesBySymbol {
+func timeRange(candlesBySymbol map[string][]models.Candle, symbols []string) (min, max time.Time) {
+	for _, symbol := range symbols {
+		candles := candlesBySymbol[symbol]
 		if len(candles) == 0 {
 			continue
 		}

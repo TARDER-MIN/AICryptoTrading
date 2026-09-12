@@ -72,7 +72,7 @@ func backfillICT2026Defaults(p *SBParams) {
 // that justified it (see internal/backtest.Result, passed through as
 // already-marshaled JSON by the caller to avoid an import cycle between
 // strategy and backtest).
-func SaveParams(ctx context.Context, pool *pgxpool.Pool, params SBParams, trainMetrics, validationMetrics []byte) error {
+func SaveParams(ctx context.Context, pool *pgxpool.Pool, params SBParams, trainMetrics, validationMetrics, testMetrics []byte) error {
 	// Keep optimized and externally supplied parameter sets on the fixed
 	// 1:1.5 risk/reward rule as well.
 	params.RiskRewardRatio = 1.5
@@ -82,8 +82,8 @@ func SaveParams(ctx context.Context, pool *pgxpool.Pool, params SBParams, trainM
 	}
 	_, err = pool.Exec(ctx, `
 		UPDATE strategy_params
-		SET params = $1, train_metrics = $2, validation_metrics = $3, optimized_at = now(), updated_at = now()
+		SET params = $1, train_metrics = $2, validation_metrics = $3, test_metrics = $4, optimized_at = now(), updated_at = now()
 		WHERE id = 1
-	`, paramsJSON, trainMetrics, validationMetrics)
+	`, paramsJSON, trainMetrics, validationMetrics, testMetrics)
 	return err
 }

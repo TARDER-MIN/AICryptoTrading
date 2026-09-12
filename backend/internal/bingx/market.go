@@ -193,6 +193,76 @@ type PremiumIndexResult struct {
 	NextFundingTime int64  `json:"nextFundingTime"`
 }
 
+// FundingRateEvent is one historical funding settlement for a perpetual
+// contract. Rate is a decimal fraction (0.0001 means 0.01%).
+type FundingRateEvent struct {
+	Symbol    string
+	Rate      float64
+	Time      time.Time
+	MarkPrice float64
+}
+
+type fundingRateRow struct {
+	Symbol      string `json:"symbol"`
+	FundingRate numStr `json:"fundingRate"`
+	FundingTime int64  `json:"fundingTime"`
+	MarkPrice   numStr `json:"markPrice"`
+}
+
+// FundingRatesRange fetches actual historical settlement rates, oldest first.
+// BingX returns newest-first pages capped at 1000 rows. Paginating backwards
+// also covers contracts whose settlement interval is shorter than the usual
+// eight hours.
+func (c *Client) FundingRatesRange(ctx context.Context, symbol string, start, end time.Time) ([]FundingRateEvent, error) {
+	const pageLimit = 1000
+	var out []FundingRateEvent
+	cursorEnd := end
+	for cursorEnd.After(start) {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		params := url.Values{
+			"symbol":    {symbol},
+			"startTime": {strconv.FormatInt(start.UnixMilli(), 10)},
+			"endTime":   {strconv.FormatInt(cursorEnd.UnixMilli(), 10)},
+			"limit":     {strconv.Itoa(pageLimit)},
+		}
+		var raw []fundingRateRow
+		if err := c.do(ctx, http.MethodGet, "/openApi/swap/v2/quote/fundingRate", params, false, false, &raw); err != nil {
+			return nil, err
+		}
+		if len(raw) == 0 {
+			break
+		}
+
+		earliest := cursorEnd
+		for _, row := range raw {
+			ts := time.UnixMilli(row.FundingTime)
+			if ts.Before(start) || ts.After(end) {
+				continue
+			}
+			if ts.Before(earliest) {
+				earliest = ts
+			}
+			out = append(out, FundingRateEvent{
+				Symbol: row.Symbol, Rate: row.FundingRate.Float(), Time: ts,
+				MarkPrice: row.MarkPrice.Float(),
+			})
+		}
+		if len(raw) < pageLimit || !earliest.Before(cursorEnd) {
+			break
+		}
+		cursorEnd = earliest.Add(-time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(1100 * time.Millisecond):
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Time.Before(out[j].Time) })
+	return out, nil
+}
+
 func (c *Client) PremiumIndex(ctx context.Context, symbol string) (*PremiumIndexResult, error) {
 	params := url.Values{"symbol": {symbol}}
 	var out PremiumIndexResult

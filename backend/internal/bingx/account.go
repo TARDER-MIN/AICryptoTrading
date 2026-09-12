@@ -17,6 +17,34 @@ type accountResponse struct {
 	UnrealizedProfit numStr `json:"unrealizedProfit"`
 }
 
+// CommissionRate is the authenticated account-specific perpetual-futures
+// fee schedule. It reflects VIP discounts more accurately than a hardcoded
+// public default.
+type CommissionRate struct {
+	TakerCommissionRate float64
+	MakerCommissionRate float64
+}
+
+type commissionRateResponse struct {
+	Commission struct {
+		TakerCommissionRate numStr `json:"takerCommissionRate"`
+		MakerCommissionRate numStr `json:"makerCommissionRate"`
+	} `json:"commission"`
+}
+
+// UserCommissionRate fetches the current user's maker/taker fee rates
+// (signed). BingX returns decimal fractions, e.g. 0.0005 for 0.05%.
+func (c *Client) UserCommissionRate(ctx context.Context) (*CommissionRate, error) {
+	var out commissionRateResponse
+	if err := c.do(ctx, http.MethodGet, "/openApi/swap/v2/user/commissionRate", nil, true, true, &out); err != nil {
+		return nil, err
+	}
+	return &CommissionRate{
+		TakerCommissionRate: out.Commission.TakerCommissionRate.Float(),
+		MakerCommissionRate: out.Commission.MakerCommissionRate.Float(),
+	}, nil
+}
+
 // Account fetches the account-level balance snapshot (signed).
 func (c *Client) Account(ctx context.Context) (*models.AccountSummary, error) {
 	var rows []accountResponse
