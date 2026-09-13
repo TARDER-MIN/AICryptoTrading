@@ -74,10 +74,13 @@ The optimizer requests up to 180 days from BingX, but the perpetual-futures
 shows the actual first/last timestamps and candle count; it never substitutes
 spot candles for missing futures history.
 
-Each run uses the current 20 most-liquid crypto perpetuals and splits the
-available time range into 60% training, 20% parameter-selection validation,
-and a final untouched 20% test. A trade crossing a split boundary is excluded
-from the earlier interval so future exit prices cannot leak backward. The
+Each run uses the current 20 most-liquid crypto perpetuals. The first 80% is
+the development window: every fixed candidate is scored over three
+chronological validation folds and must remain profitable across time and on
+both BUY and SELL trades. The final 20% stays untouched until the robust
+candidate is fixed and is used only as a deployment gate. A trade crossing a
+split boundary is excluded from the earlier interval so future exit prices
+cannot leak backward. The
 reported return, Sharpe, profit factor, and drawdown use net per-trade returns
 after the configured taker-fee and slippage assumptions:
 
@@ -112,8 +115,15 @@ The full history is divided into five chronological blocks. Each fold selects
 parameters from only the blocks already available at that time and tests the
 next block; the four out-of-sample blocks are then combined. A fold passes
 only with at least 10 trades, positive net return, profit factor above 1, and
-positive per-trade Sharpe. Walk-forward diagnostics never feed back into the
-main 60/20/20 winner and never rewrite the untouched final-test result.
+positive per-trade Sharpe. Walk-forward outcomes never feed back into
+candidate ranking or rewrite the untouched final-test result, but they can
+block deployment. Parameters are applied only when a robust development
+candidate exists, at least three of four adaptive walk-forward folds pass,
+the aggregate walk-forward profit factor is at least 1.20, and the completed
+final-test sample is profitable overall and independently for both BUY and
+SELL directions. A rejected run saves its full report without replacing the
+active parameters. Triggering research also explicitly keeps automatic order
+execution paused.
 
 ## Safety model
 

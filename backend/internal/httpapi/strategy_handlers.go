@@ -14,6 +14,7 @@ import (
 	"cryptotrading/internal/backtest"
 	"cryptotrading/internal/bingx"
 	"cryptotrading/internal/models"
+	"cryptotrading/internal/settings"
 	"cryptotrading/internal/strategy"
 )
 
@@ -121,15 +122,18 @@ func registerStrategyRoutes(g *gin.RouterGroup, d Deps) {
 
 	// POST /strategy/optimize pulls deep history for an independent pool of
 	// the 20 most-liquid BingX crypto perpetuals, grid-searches Silver Bullet
-	// parameters against it
-	// (train/selection-validation/final-test split, ranked only by
-	// selection-validation Sharpe - see
-	// internal/backtest.Optimize for why), saves the winning set, and
-	// live-reloads the running autotrader.Trader so it takes effect
-	// immediately without a restart. Manually triggered and can take a
-	// while (deep history fetch + a few hundred backtest runs per symbol).
+	// parameters against it. Robust selection runs only inside the first 80%
+	// development window; the final 20% and direction checks are fail-closed
+	// deployment gates. A rejected run saves its report without changing the
+	// active parameters. A passing run saves/reloads the winner, while this
+	// research action always keeps automatic order execution paused.
 	g.POST("/strategy/optimize", func(c *gin.Context) {
 		ctx := c.Request.Context()
+		paused := false
+		if _, err := settings.Update(ctx, d.Pool, settings.UpdateInput{AutotradeEnabled: &paused}); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "pause auto-trading before optimization: " + err.Error()})
+			return
+		}
 
 		contracts, err := d.BingX.ExchangeInfo(ctx)
 		if err != nil {
@@ -275,11 +279,19 @@ func registerStrategyRoutes(g *gin.RouterGroup, d Deps) {
 		validJSON, _ := json.Marshal(report.Validation)
 		testJSON, _ := json.Marshal(report.Test)
 		reportJSON, _ := json.Marshal(report)
-		if err := strategy.SaveParams(ctx, d.Pool, report.Best, trainJSON, validJSON, testJSON, reportJSON); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		var saveErr error
+		if report.ParamsApplied {
+			saveErr = strategy.SaveParams(ctx, d.Pool, report.Best, trainJSON, validJSON, testJSON, reportJSON)
+		} else {
+			saveErr = strategy.SaveOptimizationReport(ctx, d.Pool, reportJSON)
+		}
+		if saveErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": saveErr.Error()})
 			return
 		}
-		d.Trader.SetSBParams(report.Best)
+		if report.ParamsApplied {
+			d.Trader.SetSBParams(report.Best)
+		}
 
 		c.JSON(http.StatusOK, report)
 	})

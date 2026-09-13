@@ -88,3 +88,16 @@ func SaveParams(ctx context.Context, pool *pgxpool.Pool, params SBParams, trainM
 	`, paramsJSON, trainMetrics, validationMetrics, testMetrics, lastReport)
 	return err
 }
+
+// SaveOptimizationReport records a rejected research run without replacing
+// the currently-active parameters or the metrics that justified them. This is
+// the fail-closed path used when walk-forward/final deployment gates do not
+// pass; the dashboard can still explain the result after a refresh.
+func SaveOptimizationReport(ctx context.Context, pool *pgxpool.Pool, lastReport []byte) error {
+	_, err := pool.Exec(ctx, `
+		UPDATE strategy_params
+		SET last_report = $1, updated_at = now()
+		WHERE id = 1
+	`, lastReport)
+	return err
+}

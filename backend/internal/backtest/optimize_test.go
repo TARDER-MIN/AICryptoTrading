@@ -9,18 +9,92 @@ import (
 	"cryptotrading/internal/strategy"
 )
 
-func TestSortByValidationSharpeDoesNotUseFinalTest(t *testing.T) {
-	candidates := []Candidate{
-		{Validation: Result{Sharpe: 0.4}, test: Result{Sharpe: 99}},
-		{Validation: Result{Sharpe: 0.8}, test: Result{Sharpe: -99}},
+func TestRobustSelectionRewardsRepeatedDevelopmentPerformanceWithoutFinalLeakage(t *testing.T) {
+	base := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+	developmentEnd := base.Add(40 * time.Hour)
+	paramsStable := strategy.DefaultSBParams()
+	paramsStable.SwingLookback = 10
+	paramsUnstable := strategy.DefaultSBParams()
+	paramsUnstable.SwingLookback = 20
+
+	makeTrades := func(block int, pnl func(int) float64) []Trade {
+		trades := make([]Trade, 0, 10)
+		for i := 0; i < 10; i++ {
+			entry := base.Add(time.Duration(block)*10*time.Hour + time.Duration(i)*45*time.Minute)
+			value := pnl(i)
+			reason := "target"
+			if value < 0 {
+				reason = "stop"
+			}
+			side := models.SignalBuy
+			if i%2 == 1 {
+				side = models.SignalSell
+			}
+			trades = append(trades, Trade{
+				Symbol: "BTC-USDT", Side: side, EntryTs: entry, ExitTs: entry.Add(time.Minute),
+				ExitReason: reason, GrossPnLPct: value, PnLPct: value,
+			})
+		}
+		return trades
 	}
 
-	sortByValidationSharpeDesc(candidates)
-	if candidates[0].Validation.Sharpe != 0.8 {
-		t.Fatalf("winner validation Sharpe = %.2f, want 0.8", candidates[0].Validation.Sharpe)
+	var stable, unstable []Trade
+	for block := 1; block <= 3; block++ {
+		stable = append(stable, makeTrades(block, func(i int) float64 {
+			return 1 + float64((i/2)%2)
+		})...)
+		unstable = append(unstable, makeTrades(block, func(i int) float64 {
+			if block == 1 {
+				return 10 + float64((i/2)%2)
+			}
+			return -1 - float64((i/2)%2)
+		})...)
 	}
-	if candidates[0].test.Sharpe != -99 {
-		t.Fatal("final-test Sharpe influenced candidate ordering")
+	// Future trades begin at developmentEnd and must never rescue the
+	// unstable candidate during selection.
+	unstable = append(unstable, makeTrades(4, func(i int) float64 {
+		return 100 + float64((i/2)%2)
+	})...)
+
+	ranked, passed := rankRobustCandidates([]Candidate{
+		{Params: paramsUnstable, allTrades: unstable},
+		{Params: paramsStable, allTrades: stable},
+	}, base, developmentEnd, CostModel{})
+	if passed != 1 || len(ranked) != 2 {
+		t.Fatalf("robust candidates = %d/%d, want 1/2", passed, len(ranked))
+	}
+	if !ranked[0].eligible || ranked[0].candidate.Params.SwingLookback != 10 {
+		t.Fatalf("winner = lookback %d eligible=%v, want stable lookback 10", ranked[0].candidate.Params.SwingLookback, ranked[0].eligible)
+	}
+}
+
+func TestRobustSelectionRejectsOneSidedCandidate(t *testing.T) {
+	base := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+	params := strategy.DefaultSBParams()
+	var trades []Trade
+	for block := 1; block <= 3; block++ {
+		for i := 0; i < 10; i++ {
+			entry := base.Add(time.Duration(block)*10*time.Hour + time.Duration(i)*45*time.Minute)
+			side, pnl, reason := models.SignalBuy, -0.5-float64((i/2)%2)/10, "stop"
+			if i%2 == 1 {
+				side, pnl, reason = models.SignalSell, 2+float64((i/2)%2), "target"
+			}
+			trades = append(trades, Trade{
+				Symbol: "BTC-USDT", Side: side, EntryTs: entry, ExitTs: entry.Add(time.Minute),
+				ExitReason: reason, GrossPnLPct: pnl, PnLPct: pnl,
+			})
+		}
+	}
+
+	ranked, passed := rankRobustCandidates(
+		[]Candidate{{Params: params, allTrades: trades}},
+		base, base.Add(40*time.Hour), CostModel{},
+	)
+	if passed != 0 || len(ranked) != 1 || ranked[0].eligible {
+		t.Fatalf("one-sided candidate passed=%d eligible=%v, want rejected", passed, ranked[0].eligible)
+	}
+	if ranked[0].robustSides != 1 {
+		t.Fatalf("robust sides = %d, want only SELL", ranked[0].robustSides)
 	}
 }
 
@@ -45,6 +119,52 @@ func TestFinalTestDiagnosticsBreaksDownAndSeparatesEndOfData(t *testing.T) {
 	if len(got.BySide) != 2 || len(got.ByDay) != 2 {
 		t.Fatalf("diagnostic group sizes side/day = %d/%d, want 2/2", len(got.BySide), len(got.ByDay))
 	}
+}
+
+func TestDeploymentGateBlocksUnprofitableFinalBuySide(t *testing.T) {
+	base := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+	var trades []Trade
+	for i := 0; i < 20; i++ {
+		side, pnl, reason := models.SignalBuy, -0.5-float64((i/2)%2)/10, "stop"
+		if i%2 == 1 {
+			side, pnl, reason = models.SignalSell, 2+float64((i/2)%2), "target"
+		}
+		entry := base.Add(time.Duration(i) * time.Hour)
+		trades = append(trades, Trade{
+			Symbol: "BTC-USDT", Side: side, EntryTs: entry, ExitTs: entry.Add(time.Minute),
+			ExitReason: reason, GrossPnLPct: pnl, PnLPct: pnl,
+		})
+	}
+	testMetrics := Metrics(trades, time.Time{}, time.Time{}, CostModel{})
+	report := OptimizeReport{
+		CandidatesPassed: 1,
+		RobustSelection: RobustSelectionReport{UsedFallback: false},
+		WalkForward: WalkForwardReport{
+			TotalFolds: 4, PassedFolds: 3,
+			AggregateMetrics: Result{
+				TotalTrades: 100, TotalReturnPct: 10, ProfitFactor: 1.5,
+				Sharpe: 0.2, MaxDrawdownPct: 5,
+			},
+		Test:             testMetrics,
+		FinalDiagnostics: buildFinalTestDiagnostics(trades, CostModel{}),
+	}
+
+	blockers := deploymentBlockers(report)
+	if !containsString(blockers, "final_buy_unprofitable") {
+		t.Fatalf("blockers = %v, want final_buy_unprofitable", blockers)
+	}
+	if containsString(blockers, "final_sell_unprofitable") || containsString(blockers, "final_sell_insufficient") {
+		t.Fatalf("blockers = %v, profitable SELL side should pass", blockers)
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestWalkForwardSelectsEachFoldWithoutFutureLeakage(t *testing.T) {

@@ -57,41 +57,76 @@ type WalkForwardFold struct {
 }
 
 type WalkForwardReport struct {
-	Folds             []WalkForwardFold `json:"folds"`
-	AggregateMetrics  Result             `json:"aggregate_metrics"`
-	PassedFolds       int                `json:"passed_folds"`
-	TotalFolds        int                `json:"total_folds"`
+	Folds            []WalkForwardFold `json:"folds"`
+	AggregateMetrics Result            `json:"aggregate_metrics"`
+	PassedFolds      int               `json:"passed_folds"`
+	TotalFolds       int               `json:"total_folds"`
+}
+
+// RobustSelectionFold is one chronological validation slice for a single,
+// fixed candidate. All folds end before the untouched final 20%, so they may
+// safely participate in ranking without leaking final-test prices.
+type RobustSelectionFold struct {
+	Index       int       `json:"index"`
+	TestStart   time.Time `json:"test_start"`
+	TestEnd     time.Time `json:"test_end"`
+	TestMetrics Result    `json:"test_metrics"`
+	Passed      bool      `json:"passed"`
+}
+
+// RobustSelectionReport explains why the proposed parameter set won (or why
+// no set was safe enough to apply). Unlike the diagnostic WalkForward report,
+// these folds score the same candidate repeatedly across the development
+// sample; this rewards temporal stability instead of one exceptional slice.
+type RobustSelectionReport struct {
+	SelectedParams   strategy.SBParams     `json:"selected_params"`
+	Folds            []RobustSelectionFold `json:"folds"`
+	AggregateMetrics Result                `json:"aggregate_metrics"`
+	BySide           []Breakdown           `json:"by_side"`
+	PassedFolds      int                   `json:"passed_folds"`
+	TotalFolds       int                   `json:"total_folds"`
+	CandidatesPassed int                   `json:"candidates_passed"`
+	UsedFallback     bool                  `json:"used_fallback"`
 }
 
 type OptimizeReport struct {
-	Best                 strategy.SBParams `json:"best_params"`
-	Train                Result            `json:"train_metrics"`
-	Validation           Result            `json:"validation_metrics"`
-	Test                 Result            `json:"test_metrics"`
-	CostModel            CostModel         `json:"cost_model"`
-	TopCandidates        []Candidate       `json:"top_candidates"`
-	CandidatesEvaluated  int               `json:"candidates_evaluated"`
-	CandidatesPassed     int               `json:"candidates_passed"`
-	TrainEnd             time.Time         `json:"train_end"`
-	TestStart            time.Time         `json:"test_start"`
-	HistoryDays          int               `json:"history_days,omitempty"`
-	HistoryAvailableDays float64           `json:"history_available_days,omitempty"`
-	SymbolsTested        []string          `json:"symbols_tested,omitempty"`
-	HistoryStart         time.Time         `json:"history_start,omitempty"`
-	HistoryEnd           time.Time         `json:"history_end,omitempty"`
-	CandlesTested        int               `json:"candles_tested,omitempty"`
+	Best                 strategy.SBParams    `json:"best_params"`
+	Train                Result               `json:"train_metrics"`
+	Validation           Result               `json:"validation_metrics"`
+	Test                 Result               `json:"test_metrics"`
+	CostModel            CostModel            `json:"cost_model"`
+	TopCandidates        []Candidate          `json:"top_candidates"`
+	CandidatesEvaluated  int                  `json:"candidates_evaluated"`
+	CandidatesPassed     int                  `json:"candidates_passed"`
+	TrainEnd             time.Time            `json:"train_end"`
+	TestStart            time.Time            `json:"test_start"`
+	HistoryDays          int                  `json:"history_days,omitempty"`
+	HistoryAvailableDays float64              `json:"history_available_days,omitempty"`
+	SymbolsTested        []string             `json:"symbols_tested,omitempty"`
+	HistoryStart         time.Time            `json:"history_start,omitempty"`
+	HistoryEnd           time.Time            `json:"history_end,omitempty"`
+	CandlesTested        int                  `json:"candles_tested,omitempty"`
 	FinalDiagnostics     FinalTestDiagnostics `json:"final_test_diagnostics"`
+	RobustSelection      RobustSelectionReport `json:"robust_selection"`
 	WalkForward          WalkForwardReport    `json:"walk_forward"`
+	ParamsApplied        bool                 `json:"params_applied"`
+	ApplyBlockers        []string             `json:"apply_blockers"`
 }
 
-// minValidationTrades/minValidationSharpe are the overfitting guard: a
-// parameter set is only eligible for selection if it produced enough
-// selection-validation trades and was profitable in the per-trade Sharpe
-// sense. This middle segment is intentionally used for model selection; the
-// later test segment is the only interval the selection process never sees.
+// These thresholds are deliberately fixed in code rather than tuned against
+// the same sample. They control the development folds, direction checks, and
+// the independent deployment gate described below.
 const (
 	minValidationTrades = 10
 	minValidationSharpe = 0.0
+
+	robustSelectionBlocks    = 4
+	minRobustPassedFolds     = 2
+	minRobustTotalTrades     = 30
+	minRobustSideTrades      = 10
+	minRobustProfitFactor    = 1.20
+	maxRobustDrawdownPct     = 10.0
+	minDeploymentPassedFolds = 3
 )
 
 // Optimize grid-searches strategy.SBParams over historical candles pooled
@@ -105,17 +140,20 @@ const (
 // data via strategy.AnchorSymbolFor, never simulated as a tradeable symbol
 // themselves. The HTTP optimizer supplies an independent liquidity-ranked
 // crypto universe here; changing it does not alter the live watchlist. Every
-// candidate is simulated with backtest.Run per tradable
-// symbol; trades are pooled and split by EntryTs relative to the split
-// timestamp into training, selection-validation, and final-test Results.
-// Candidates are ranked only by selection-validation Sharpe among those
-// clearing the minimum trade-count/Sharpe bar. The final test interval is
-// reported only after the winner is fixed; it is never used to rank or
-// filter candidates.
+// candidate is simulated with backtest.Run per tradable symbol; trades are
+// pooled and split by EntryTs relative to the global timestamps. Candidate
+// ranking uses repeated chronological folds entirely inside the first 80%
+// development sample and requires profitable evidence from both BUY and SELL
+// trades. The final 20% is opened only after the proposed winner is fixed and
+// acts as a deployment gate, never as a ranking input. Failing any gate keeps
+// the report visible but prevents the proposed parameters from being applied.
 func Optimize(candlesBySymbol map[string][]models.Candle, fundingBySymbol map[string][]FundingEvent, tradableSymbols []string, trainFrac, validationFrac float64, costs CostModel) OptimizeReport {
 	minTs, maxTs := timeRange(candlesBySymbol, tradableSymbols)
 	if minTs.IsZero() || maxTs.IsZero() || !maxTs.After(minTs) {
-		return OptimizeReport{Best: strategy.DefaultSBParams(), CostModel: costs.normalized()}
+		return OptimizeReport{
+			Best: strategy.DefaultSBParams(), CostModel: costs.normalized(),
+			ApplyBlockers: []string{"insufficient_history"},
+		}
 	}
 	if trainFrac <= 0 || validationFrac <= 0 || trainFrac+validationFrac >= 1 {
 		trainFrac, validationFrac = 0.6, 0.2
@@ -152,40 +190,246 @@ func Optimize(candlesBySymbol map[string][]models.Candle, fundingBySymbol map[st
 		CandidatesEvaluated: len(candidates),
 	}
 
-	var passing []Candidate
-	for _, c := range candidates {
-		if c.Validation.TotalTrades >= minValidationTrades && c.Validation.Sharpe > minValidationSharpe {
-			passing = append(passing, c)
+	ranked, robustCandidatesPassed := rankRobustCandidates(candidates, minTs, testStart, costs)
+	report.CandidatesPassed = robustCandidatesPassed
+
+	if len(ranked) > 0 {
+		best := ranked[0]
+		report.Best = best.candidate.Params
+		report.Train = best.candidate.Train
+		report.Validation = best.candidate.Validation
+		report.Test = best.candidate.test
+		report.RobustSelection = best.report
+		report.RobustSelection.CandidatesPassed = robustCandidatesPassed
+		report.RobustSelection.UsedFallback = !best.eligible
+
+		topN := min(len(ranked), 5)
+		for _, item := range ranked[:topN] {
+			report.TopCandidates = append(report.TopCandidates, item.candidate)
 		}
-	}
-	report.CandidatesPassed = len(passing)
-
-	pool := passing
-	if len(pool) == 0 {
-		// Nothing cleared the validation bar - fall back to ranking all
-		// candidates by validation Sharpe anyway so the caller still gets a
-		// usable (if flagged-as-weak) report rather than an error; the
-		// small validation trade count is visible in the response either way.
-		pool = candidates
-	}
-	sortByValidationSharpeDesc(pool)
-
-	if len(pool) > 0 {
-		best := pool[0]
-		report.Best = best.Params
-		report.Train = best.Train
-		report.Validation = best.Validation
-		report.Test = best.test
 	} else {
 		report.Best = strategy.DefaultSBParams()
+		report.RobustSelection.UsedFallback = true
 	}
 	report.FinalDiagnostics = buildFinalTestDiagnostics(report.Test.Trades, costs)
 	report.WalkForward = buildWalkForwardReport(candidates, minTs, maxTs, costs)
-
-	topN := min(len(pool), 5)
-	report.TopCandidates = pool[:topN]
+	report.ApplyBlockers = deploymentBlockers(report)
+	report.ParamsApplied = len(report.ApplyBlockers) == 0
 
 	return report
+}
+
+type robustCandidateScore struct {
+	candidate       Candidate
+	report          RobustSelectionReport
+	eligible        bool
+	robustSides     int
+	worstFoldReturn float64
+}
+
+// rankRobustCandidates scores every fixed parameter set on three consecutive
+// validation folds within the first 80% development window. The untouched
+// final 20% is not passed to this function and therefore cannot influence the
+// winner. A fallback candidate is still returned for diagnosis, but its
+// eligible flag remains false so the HTTP layer cannot apply it.
+func rankRobustCandidates(candidates []Candidate, minTs, developmentEnd time.Time, costs CostModel) ([]robustCandidateScore, int) {
+	scores := make([]robustCandidateScore, 0, len(candidates))
+	passed := 0
+	for _, candidate := range candidates {
+		score := scoreRobustCandidate(candidate, minTs, developmentEnd, costs)
+		if score.eligible {
+			passed++
+		}
+		scores = append(scores, score)
+	}
+
+	sort.SliceStable(scores, func(i, j int) bool {
+		left, right := scores[i], scores[j]
+		if left.eligible != right.eligible {
+			return left.eligible
+		}
+		if left.report.PassedFolds != right.report.PassedFolds {
+			return left.report.PassedFolds > right.report.PassedFolds
+		}
+		if left.robustSides != right.robustSides {
+			return left.robustSides > right.robustSides
+		}
+		if left.worstFoldReturn != right.worstFoldReturn {
+			return left.worstFoldReturn > right.worstFoldReturn
+		}
+		if left.report.AggregateMetrics.ProfitFactor != right.report.AggregateMetrics.ProfitFactor {
+			return left.report.AggregateMetrics.ProfitFactor > right.report.AggregateMetrics.ProfitFactor
+		}
+		if left.report.AggregateMetrics.Sharpe != right.report.AggregateMetrics.Sharpe {
+			return left.report.AggregateMetrics.Sharpe > right.report.AggregateMetrics.Sharpe
+		}
+		if left.report.AggregateMetrics.TotalReturnPct != right.report.AggregateMetrics.TotalReturnPct {
+			return left.report.AggregateMetrics.TotalReturnPct > right.report.AggregateMetrics.TotalReturnPct
+		}
+		return left.report.AggregateMetrics.MaxDrawdownPct < right.report.AggregateMetrics.MaxDrawdownPct
+	})
+	return scores, passed
+}
+
+func scoreRobustCandidate(candidate Candidate, minTs, developmentEnd time.Time, costs CostModel) robustCandidateScore {
+	report := RobustSelectionReport{SelectedParams: candidate.Params}
+	if minTs.IsZero() || !developmentEnd.After(minTs) {
+		return robustCandidateScore{candidate: candidate, report: report}
+	}
+
+	span := developmentEnd.Sub(minTs)
+	var aggregateTrades []Trade
+	for foldIndex := 1; foldIndex < robustSelectionBlocks; foldIndex++ {
+		testStart := minTs.Add(time.Duration(float64(span) * float64(foldIndex) / robustSelectionBlocks))
+		testEnd := minTs.Add(time.Duration(float64(span) * float64(foldIndex+1) / robustSelectionBlocks))
+		if foldIndex == robustSelectionBlocks-1 {
+			testEnd = developmentEnd
+		}
+		metrics := Metrics(candidate.allTrades, testStart, testEnd, costs)
+		foldPassed := passesSingleFold(metrics)
+		if foldPassed {
+			report.PassedFolds++
+		}
+		report.Folds = append(report.Folds, RobustSelectionFold{
+			Index: foldIndex, TestStart: testStart, TestEnd: testEnd,
+			TestMetrics: metrics, Passed: foldPassed,
+		})
+		aggregateTrades = append(aggregateTrades, metrics.Trades...)
+	}
+	report.TotalFolds = len(report.Folds)
+	report.AggregateMetrics = Metrics(aggregateTrades, time.Time{}, time.Time{}, costs)
+	report.BySide = breakdownBySide(aggregateTrades, costs)
+
+	robustSides := 0
+	for _, side := range []string{string(models.SignalBuy), string(models.SignalSell)} {
+		metrics, ok := breakdownMetrics(report.BySide, side)
+		if ok && passesDirectionGate(metrics) {
+			robustSides++
+		}
+	}
+	worstFoldReturn := 0.0
+	if len(report.Folds) > 0 {
+		worstFoldReturn = report.Folds[0].TestMetrics.TotalReturnPct
+		for _, fold := range report.Folds[1:] {
+			if fold.TestMetrics.TotalReturnPct < worstFoldReturn {
+				worstFoldReturn = fold.TestMetrics.TotalReturnPct
+			}
+		}
+	}
+
+	aggregate := report.AggregateMetrics
+	eligible := report.PassedFolds >= minRobustPassedFolds &&
+		aggregate.TotalTrades >= minRobustTotalTrades &&
+		aggregate.TotalReturnPct > 0 && aggregate.ProfitFactor >= minRobustProfitFactor &&
+		aggregate.Sharpe > 0 && aggregate.MaxDrawdownPct <= maxRobustDrawdownPct &&
+		robustSides == 2
+
+	return robustCandidateScore{
+		candidate: candidate, report: report, eligible: eligible,
+		robustSides: robustSides, worstFoldReturn: worstFoldReturn,
+	}
+}
+
+func passesSingleFold(metrics Result) bool {
+	return metrics.TotalTrades >= minValidationTrades && metrics.TotalReturnPct > 0 &&
+		metrics.ProfitFactor > 1 && metrics.Sharpe > minValidationSharpe
+}
+
+func passesDirectionGate(metrics Result) bool {
+	return metrics.TotalTrades >= minRobustSideTrades && metrics.TotalReturnPct > 0 &&
+		metrics.ProfitFactor > 1 && metrics.Sharpe > 0
+}
+
+func breakdownBySide(trades []Trade, costs CostModel) []Breakdown {
+	groups := make(map[string][]Trade)
+	for _, trade := range trades {
+		groups[string(trade.Side)] = append(groups[string(trade.Side)], trade)
+	}
+	out := groupedBreakdowns(groups, costs)
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Label < out[j].Label })
+	return out
+}
+
+func breakdownMetrics(rows []Breakdown, label string) (Result, bool) {
+	for _, row := range rows {
+		if row.Label == label {
+			return row.Metrics, true
+		}
+	}
+	return Result{}, false
+}
+
+// deploymentBlockers is deliberately stricter than candidate ranking. The
+// proposed parameters must survive development-fold stability, the adaptive
+// four-fold walk-forward process, and the untouched final test after costs.
+// BUY and SELL must each have enough completed final trades and independent
+// positive expectancy; otherwise the report is saved without changing live
+// strategy parameters.
+func deploymentBlockers(report OptimizeReport) []string {
+	var blockers []string
+	if report.RobustSelection.UsedFallback || report.CandidatesPassed == 0 {
+		blockers = append(blockers, "no_robust_candidate")
+	}
+
+	walkForward := report.WalkForward
+	if walkForward.TotalFolds == 0 || walkForward.PassedFolds < minDeploymentPassedFolds {
+		blockers = append(blockers, "walk_forward_pass_rate")
+	}
+	if walkForward.AggregateMetrics.TotalTrades < minRobustTotalTrades {
+		blockers = append(blockers, "walk_forward_trades")
+	}
+	if walkForward.AggregateMetrics.TotalReturnPct <= 0 {
+		blockers = append(blockers, "walk_forward_net")
+	}
+	if walkForward.AggregateMetrics.ProfitFactor < minRobustProfitFactor {
+		blockers = append(blockers, "walk_forward_profit_factor")
+	}
+	if walkForward.AggregateMetrics.Sharpe <= 0 {
+		blockers = append(blockers, "walk_forward_sharpe")
+	}
+	if walkForward.AggregateMetrics.MaxDrawdownPct > maxRobustDrawdownPct {
+		blockers = append(blockers, "walk_forward_drawdown")
+	}
+
+	final := report.FinalDiagnostics.CompletedOnly
+	if final.TotalTrades < minValidationTrades {
+		blockers = append(blockers, "final_trades")
+	}
+	if final.TotalReturnPct <= 0 {
+		blockers = append(blockers, "final_net")
+	}
+	if final.ProfitFactor <= 1 {
+		blockers = append(blockers, "final_profit_factor")
+	}
+	if final.Sharpe <= 0 {
+		blockers = append(blockers, "final_sharpe")
+	}
+	if final.MaxDrawdownPct > maxRobustDrawdownPct {
+		blockers = append(blockers, "final_drawdown")
+	}
+
+	completed := make([]Trade, 0, len(report.Test.Trades))
+	for _, trade := range report.Test.Trades {
+		if trade.ExitReason != "end_of_data" {
+			completed = append(completed, trade)
+		}
+	}
+	finalSides := breakdownBySide(completed, report.CostModel)
+	for _, side := range []struct {
+		label string
+		name  string
+	}{
+		{label: string(models.SignalBuy), name: "buy"},
+		{label: string(models.SignalSell), name: "sell"},
+	} {
+		metrics, ok := breakdownMetrics(finalSides, side.label)
+		if !ok || metrics.TotalTrades < minRobustSideTrades {
+			blockers = append(blockers, "final_"+side.name+"_insufficient")
+		} else if !passesDirectionGate(metrics) {
+			blockers = append(blockers, "final_"+side.name+"_unprofitable")
+		}
+	}
+	return blockers
 }
 
 func buildFinalTestDiagnostics(trades []Trade, costs CostModel) FinalTestDiagnostics {
@@ -236,8 +480,8 @@ func groupedBreakdowns(groups map[string][]Trade, costs CostModel) []Breakdown {
 // buildWalkForwardReport performs four expanding-window walk-forward folds
 // over five equal chronological blocks. Fold 1 selects on block 1 and tests
 // block 2; fold 4 selects on blocks 1-4 and tests the untouched fifth block.
-// This is diagnostic only and never replaces the main winner or active
-// strategy parameters.
+// It does not select the main winner, but its aggregate result is one of the
+// independent deployment gates that must pass before that winner is applied.
 func buildWalkForwardReport(candidates []Candidate, minTs, maxTs time.Time, costs CostModel) WalkForwardReport {
 	const blocks = 5
 	var report WalkForwardReport
@@ -259,8 +503,7 @@ func buildWalkForwardReport(candidates []Candidate, minTs, maxTs time.Time, cost
 			candidates, minTs, selectionEnd, costs,
 		)
 		testMetrics := Metrics(selected.allTrades, selectionEnd, testTo, costs)
-		passed := !usedFallback && testMetrics.TotalTrades >= minValidationTrades &&
-			testMetrics.TotalReturnPct > 0 && testMetrics.ProfitFactor > 1 && testMetrics.Sharpe > 0
+		passed := !usedFallback && passesSingleFold(testMetrics)
 		if passed {
 			report.PassedFolds++
 		}
@@ -327,14 +570,6 @@ func timeRange(candlesBySymbol map[string][]models.Candle, symbols []string) (mi
 		}
 	}
 	return min, max
-}
-
-func sortByValidationSharpeDesc(c []Candidate) {
-	for i := 1; i < len(c); i++ {
-		for j := i; j > 0 && c[j].Validation.Sharpe > c[j-1].Validation.Sharpe; j-- {
-			c[j], c[j-1] = c[j-1], c[j]
-		}
-	}
 }
 
 // paramGrid enumerates a deliberately small combination space so a full

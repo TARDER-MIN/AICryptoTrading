@@ -91,6 +91,35 @@ main {
   border-top: 1px solid var(--border);
 }
 
+.optimization-decision {
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.optimization-decision.passed {
+  border-left-color: var(--buy);
+  background: rgba(48, 164, 108, 0.08);
+}
+
+.optimization-decision.blocked {
+  border-left-color: var(--sell);
+  background: rgba(229, 72, 77, 0.08);
+}
+
+.optimization-decision h4,
+.optimization-decision p {
+  margin: 0 0 6px;
+}
+
+.optimization-decision ul {
+  margin: 6px 0 0;
+  padding-left: 20px;
+}
+
 .backtest-diagnostics h4 {
   margin: 0 0 8px;
   font-size: 13px;

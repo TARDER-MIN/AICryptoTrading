@@ -160,6 +160,31 @@ export function StrategyOptimizePanel() {
       stopBuf: p.stop_buffer_pct,
     });
 
+  const blockerText = (code: string) => {
+    switch (code) {
+      case "insufficient_history": return t("strategyOptimize.blockerInsufficientHistory");
+      case "no_robust_candidate": return t("strategyOptimize.blockerNoRobustCandidate");
+      case "walk_forward_pass_rate": return t("strategyOptimize.blockerWalkForwardPassRate");
+      case "walk_forward_trades": return t("strategyOptimize.blockerWalkForwardTrades");
+      case "walk_forward_net": return t("strategyOptimize.blockerWalkForwardNet");
+      case "walk_forward_profit_factor": return t("strategyOptimize.blockerWalkForwardProfitFactor");
+      case "walk_forward_sharpe": return t("strategyOptimize.blockerWalkForwardSharpe");
+      case "walk_forward_drawdown": return t("strategyOptimize.blockerWalkForwardDrawdown");
+      case "final_trades": return t("strategyOptimize.blockerFinalTrades");
+      case "final_net": return t("strategyOptimize.blockerFinalNet");
+      case "final_profit_factor": return t("strategyOptimize.blockerFinalProfitFactor");
+      case "final_sharpe": return t("strategyOptimize.blockerFinalSharpe");
+      case "final_drawdown": return t("strategyOptimize.blockerFinalDrawdown");
+      case "final_buy_insufficient": return t("strategyOptimize.blockerFinalBuyInsufficient");
+      case "final_buy_unprofitable": return t("strategyOptimize.blockerFinalBuyUnprofitable");
+      case "final_sell_insufficient": return t("strategyOptimize.blockerFinalSellInsufficient");
+      case "final_sell_unprofitable": return t("strategyOptimize.blockerFinalSellUnprofitable");
+      default: return code;
+    }
+  };
+  const robustSelection = report?.robust_selection;
+  const applyBlockers = report?.apply_blockers ?? [];
+
   return (
     <div className="panel">
       <h3>{t("strategyOptimize.title")}</h3>
@@ -213,6 +238,29 @@ export function StrategyOptimizePanel() {
 
       {report && (
         <div style={{ marginTop: 12 }}>
+          {typeof report.params_applied === "boolean" && (
+          <div className={`optimization-decision ${report.params_applied ? "passed" : "blocked"}`}>
+            <h4>
+              {report.params_applied
+                ? t("strategyOptimize.appliedTitle")
+                : t("strategyOptimize.blockedTitle")}
+            </h4>
+            <p className="small">
+              {report.params_applied
+                ? t("strategyOptimize.appliedHelp")
+                : t("strategyOptimize.blockedHelp")}
+            </p>
+            <p className="muted small">
+              {t("strategyOptimize.proposedParams", { params: tunedParamsSummary(report.best_params) })}
+            </p>
+            {!report.params_applied && applyBlockers.length > 0 && (
+              <ul className="small">
+                {applyBlockers.map((code) => <li key={code}>{blockerText(code)}</li>)}
+              </ul>
+            )}
+          </div>
+          )}
+
           <p className="muted small">
             {t("strategyOptimize.sampleSummary", {
               days: report.history_days,
@@ -244,6 +292,70 @@ export function StrategyOptimizePanel() {
               testStart: new Date(report.test_start).toLocaleString(),
             })}
           </p>
+
+          {robustSelection && robustSelection.total_folds > 0 && (
+            <div className="backtest-diagnostics">
+              <h4>{t("strategyOptimize.robustSelectionTitle")}</h4>
+              <p className="muted small">{t("strategyOptimize.robustSelectionHelp")}</p>
+              <p className="small">
+                {t("strategyOptimize.robustSelectionSummary", {
+                  candidates: robustSelection.candidates_passed,
+                  passed: robustSelection.passed_folds,
+                  total: robustSelection.total_folds,
+                  trades: robustSelection.aggregate_metrics.total_trades,
+                  net: robustSelection.aggregate_metrics.total_return_pct.toFixed(2),
+                  pf: robustSelection.aggregate_metrics.profit_factor.toFixed(2),
+                  sharpe: robustSelection.aggregate_metrics.sharpe.toFixed(2),
+                  dd: robustSelection.aggregate_metrics.max_drawdown_pct.toFixed(2),
+                })}
+              </p>
+              {robustSelection.used_fallback && (
+                <p className="error small">{t("strategyOptimize.robustFallbackWarning")}</p>
+              )}
+              <div className="table-scroll diagnostic-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>{t("strategyOptimize.colFold")}</th>
+                      <th>{t("strategyOptimize.colTestRange")}</th>
+                      <th>{t("strategyOptimize.colTrades")}</th>
+                      <th>{t("strategyOptimize.colNetReturn")}</th>
+                      <th>{t("strategyOptimize.colProfitFactor")}</th>
+                      <th>{t("strategyOptimize.colSharpe")}</th>
+                      <th>{t("strategyOptimize.colDrawdown")}</th>
+                      <th>{t("strategyOptimize.colVerdict")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {robustSelection.folds.map((fold) => (
+                      <tr key={fold.index}>
+                        <td>{fold.index}</td>
+                        <td>{dateTime(fold.test_start)} – {dateTime(fold.test_end)}</td>
+                        <td>{fold.test_metrics.total_trades}</td>
+                        <td className={fold.test_metrics.total_return_pct >= 0 ? "buy" : "sell"}>
+                          {fold.test_metrics.total_return_pct.toFixed(2)}%
+                        </td>
+                        <td>{fold.test_metrics.profit_factor.toFixed(2)}</td>
+                        <td>{fold.test_metrics.sharpe.toFixed(2)}</td>
+                        <td>{fold.test_metrics.max_drawdown_pct.toFixed(2)}%</td>
+                        <td className={fold.passed ? "buy" : "sell"}>
+                          {fold.passed ? t("strategyOptimize.foldPass") : t("strategyOptimize.foldFail")}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <details open>
+                <summary>{t("strategyOptimize.robustBySideTitle")}</summary>
+                <BreakdownTable
+                  rows={robustSelection.by_side}
+                  labelHeader={t("strategyOptimize.colSide")}
+                />
+              </details>
+              <p className="muted small">{t("strategyOptimize.robustSelectionThreshold")}</p>
+            </div>
+          )}
 
           {report.final_test_diagnostics && (
             <div className="backtest-diagnostics">

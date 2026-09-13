@@ -234,6 +234,25 @@ export interface WalkForwardReport {
   total_folds: number;
 }
 
+export interface RobustSelectionFold {
+  index: number;
+  test_start: string;
+  test_end: string;
+  test_metrics: BacktestMetrics;
+  passed: boolean;
+}
+
+export interface RobustSelectionReport {
+  selected_params: SBParams;
+  folds: RobustSelectionFold[];
+  aggregate_metrics: BacktestMetrics;
+  by_side: BacktestBreakdown[];
+  passed_folds: number;
+  total_folds: number;
+  candidates_passed: number;
+  used_fallback: boolean;
+}
+
 export interface OptimizeReport {
   best_params: SBParams;
   train_metrics: BacktestMetrics;
@@ -258,7 +277,10 @@ export interface OptimizeReport {
   history_end: string;
   candles_tested: number;
   final_test_diagnostics: FinalTestDiagnostics;
+  robust_selection?: RobustSelectionReport;
   walk_forward: WalkForwardReport;
+  params_applied?: boolean;
+  apply_blockers?: string[];
 }
 
 export interface FundingUpdate {
