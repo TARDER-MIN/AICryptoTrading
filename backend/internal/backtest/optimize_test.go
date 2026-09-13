@@ -145,6 +145,7 @@ func TestDeploymentGateBlocksUnprofitableFinalBuySide(t *testing.T) {
 				TotalTrades: 100, TotalReturnPct: 10, ProfitFactor: 1.5,
 				Sharpe: 0.2, MaxDrawdownPct: 5,
 			},
+		},
 		Test:             testMetrics,
 		FinalDiagnostics: buildFinalTestDiagnostics(trades, CostModel{}),
 	}
