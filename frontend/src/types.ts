@@ -23,16 +23,15 @@ export interface AISignal {
   stop_loss?: number;
   take_profit?: number;
   funding_rate?: number;
-  // The Silver Bullet setup (liquidity sweep + Fair Value Gap) this signal
+  // The HTF 3+1 setup (closed-H1 sweep + M5 Fair Value Gap) this signal
   // evaluated - used to draw sweep/FVG markers on the chart.
   sweep_ts?: string;
   sweep_price?: number;
   fvg_ts?: string;
   fvg_low?: number;
   fvg_high?: number;
-  // ICT-2026 upgrade: Optimal Trade Entry zone, Breaker Block (Unicorn
-  // Model) confluence zone, and SMT divergence confirmation against a
-  // correlated anchor symbol.
+  // Legacy fields remain readable for old signals. For new signals,
+  // breaker_low/high carry the M5 order-block body and OTE/SMT stay empty.
   ote_low?: number;
   ote_high?: number;
   breaker_low?: number;
@@ -139,12 +138,12 @@ export interface WSMessage<T = unknown> {
   data: T;
 }
 
-// --- Silver Bullet strategy / backtest optimization (ICT 2026 upgrade) ---
+// --- HTF 3+1 strategy / backtest optimization ---
 // No time-of-day session gating (e.g. ICT's classic NY 10-11am/2-3pm
 // windows) - by explicit user choice, since BingX perpetuals trade 24/7.
-// A setup is evaluated whenever it occurs: sweep -> displacement-quality FVG
-// -> Optimal Trade Entry (OTE) retracement -> Breaker Block (Unicorn Model)
-// confluence -> SMT divergence confirmation against a correlated anchor.
+// A setup is evaluated whenever it occurs: fully closed H1 liquidity sweep
+// and reclaim -> M5 CHOCH/displacement -> fresh FVG or order-block first
+// retest with rejection.
 
 export interface SBParams {
   swing_lookback: number;
@@ -152,15 +151,13 @@ export interface SBParams {
   max_bars_for_sweep: number;
   stop_buffer_pct: number;
   risk_reward_ratio: number;
-  // ICT-2026 fixed structural thresholds (not grid-searched by optimize).
+  // Fixed M5 structural thresholds (not grid-searched by optimize).
   min_displacement_body_pct: number;
   max_opposing_wick_pct: number;
-  ote_min_retrace: number;
-  ote_max_retrace: number;
-  max_bars_for_ote: number;
-  breaker_lookback: number;
-  require_breaker_confluence: boolean;
-  require_smt_divergence: boolean;
+  choch_lookback: number;
+  max_bars_for_retest: number;
+  order_block_lookback: number;
+  require_rejection: boolean;
 }
 
 export interface BacktestMetrics {
@@ -192,6 +189,7 @@ export interface StrategyParamsResponse {
   validation_metrics: BacktestMetrics | null;
   test_metrics: BacktestMetrics | null;
   last_report: OptimizeReport | null;
+  last_long_report: OptimizeReport | null;
   optimized_at: string | null;
 }
 
@@ -270,9 +268,16 @@ export interface OptimizeReport {
   candidates_passed: number;
   train_end: string;
   test_start: string;
+  report_kind?: "recent_bingx" | "long_range_proxy";
+  data_source?: "bingx_usdt_perpetual" | "binance_usdt_perpetual_proxy";
+  research_only?: boolean;
+  robustness_passed: boolean;
+  reused_previous_sample?: boolean;
   history_days: number;
   history_available_days: number;
   symbols_tested: string[];
+  symbols_unavailable?: string[];
+  symbols_partial?: string[];
   history_start: string;
   history_end: string;
   candles_tested: number;
@@ -298,7 +303,7 @@ export interface WatchlistAIPick {
   price: number;
   change_pct_24h: number;
   quote_volume_24h: number;
-  // How many Silver Bullet trades the currently-live ICT-2026 rules
+  // How many HTF 3+1 trades the currently-live rules
   // actually produced for this symbol over the recent lookback window -
   // the primary reason it was picked (see internal/watchlistai).
   recent_signal_count: number;

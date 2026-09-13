@@ -15,7 +15,7 @@ The original Binance implementation remains unchanged on the `main` branch.
 - Hedge-mode or one-way-mode market orders
 - Isolated/cross margin and leverage configuration
 - Stop-market and take-profit-market protective orders
-- Existing Silver Bullet strategy, AI confirmation, backtest, dashboard,
+- HTF 3+1 strategy, AI confirmation, dual-range backtest, dashboard,
   watchlist, kill switch, cooldown, and daily order limit
 
 Market candles and funding use REST polling (8 and 10 seconds). Account and
@@ -69,12 +69,33 @@ Other important settings are documented in `.env.example`, including
 
 ## Backtest interpretation
 
-The optimizer requests up to 180 days from BingX, but the perpetual-futures
+The active deterministic strategy is fixed as follows:
+
+1. Only a fully closed H1 candle may set direction. A sweep below prior H1
+   liquidity followed by a reclaim permits longs; a sweep above prior H1
+   liquidity followed by a reclaim permits shorts.
+2. M5 must then close through recent structure (CHOCH) with a displacement
+   candle and create an FVG. The last opposite M5 candle is tracked as an OB.
+3. Entry is allowed only on the first retest of a fresh FVG or OB and only
+   when that candle rejects the zone. A first touch without valid rejection
+   consumes the zone.
+4. The stop is beyond the triggering FVG/OB invalidation edge plus buffer.
+   The entire take-profit is fixed at exactly 1:1.5. There is no session gate.
+
+All H1 bars are built from already-closed M5 candles. A partial H1 candle can
+never create direction in live evaluation or historical replay.
+
+### Same-date BingX comparison
+
+When a saved report exists, the comparison button reuses that report's exact
+symbol list and first/last timestamps so a strategy change can be compared on
+the same sample. On a clean installation it selects the current 20 most-liquid
+crypto perpetuals and requests up to 180 days from BingX. The perpetual-futures
 5-minute endpoint currently returns only about 45 days. The dashboard always
 shows the actual first/last timestamps and candle count; it never substitutes
 spot candles for missing futures history.
 
-Each run uses the current 20 most-liquid crypto perpetuals. The first 80% is
+The first 80% is
 the development window: every fixed candidate is scored over three
 chronological validation folds and must remain profitable across time and on
 both BUY and SELL trades. The final 20% stays untouched until the robust
@@ -101,6 +122,25 @@ than mixing unlike cost coverage. Return and drawdown are cumulative
 unleveraged price-return percentage points, not account-equity returns. The
 current-volume universe also introduces selection bias, so even the final-test
 result is evidence, not a promise of future profitability.
+
+### At-least-one-year broad study
+
+The second dashboard button reuses the exact symbol list and history end time
+from the latest BingX run, then requests one full calendar year of public
+Binance USDT-perpetual M5 history. This is necessary because BingX's M5 API
+does not currently supply a full year. The report clearly labels Binance as a
+proxy venue, lists symbols with no equivalent or partial listing history, and
+uses Binance's own historical funding settlements while retaining the user's
+BingX taker-fee assumption. Prices, wicks, liquidity, and funding can differ
+between venues, so this study is supporting robustness evidence rather than a
+claim that old Binance fills would have occurred on BingX.
+
+The one-year run uses the same cost-aware 60% training, 20% selection
+validation, untouched final 20%, direction breakdowns, and walk-forward
+checks. It can take several minutes because roughly two million public M5
+candles must be downloaded under the exchange rate limit. Its report is saved
+separately and **can never update active live parameters**, even if every gate
+passes. Automatic trading remains paused throughout.
 
 The latest report also keeps the untouched final test explainable instead of
 showing only one aggregate number. It breaks that period down by contract,

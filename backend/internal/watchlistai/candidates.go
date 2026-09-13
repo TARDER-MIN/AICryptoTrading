@@ -13,7 +13,6 @@ import (
 
 	"cryptotrading/internal/backtest"
 	"cryptotrading/internal/bingx"
-	"cryptotrading/internal/models"
 	"cryptotrading/internal/strategy"
 )
 
@@ -30,7 +29,7 @@ const (
 	// this only needs to rank candidates by "does the CURRENT live ruleset
 	// actually fire on this symbol lately", not produce a statistically
 	// rigorous count, and keeping it short bounds the daily refresh's REST
-	// call volume (poolSize+2 anchor fetches, each paginated).
+	// call volume (one paginated history request per candidate).
 	SignalScanLookbackDays = 14
 )
 
@@ -40,9 +39,9 @@ type Candidate struct {
 	ChangePct24h   float64 `json:"change_pct_24h"`
 	QuoteVolume24h float64 `json:"quote_volume_24h"`
 	FundingRate    float64 `json:"funding_rate"`
-	// RecentSignalCount is how many Silver Bullet trades the CURRENTLY
-	// ACTIVE ICT-2026 rules (all five gates: sweep, displacement FVG, OTE,
-	// Breaker confluence, SMT divergence) would have produced for this
+	// RecentSignalCount is how many HTF 3+1 trades the CURRENTLY ACTIVE
+	// rules (closed-H1 sweep, M5 CHOCH/displacement, fresh FVG or OB first
+	// retest rejection) would have produced for this
 	// symbol over the last SignalScanLookbackDays - filled in by
 	// AnnotateSignalFrequency, zero until then. This is the primary
 	// selection signal for "which symbols actually produce signals under
@@ -112,15 +111,11 @@ func FetchCandidates(ctx context.Context, bclient *bingx.Client, filters *bingx.
 }
 
 // AnnotateSignalFrequency fills in each candidate's RecentSignalCount by
-// replaying the currently-active Silver Bullet rules (params) against the
+// replaying the currently-active HTF 3+1 rules (params) against the
 // last SignalScanLookbackDays of that symbol's history - the same
 // backtest.Run engine internal/httpapi/strategy_handlers.go uses for
 // parameter tuning, here used to answer "how often does THIS symbol
-// actually produce a signal under the rules as they stand today". Fetches
-// the two strategy.AnchorSymbols once and reuses them for every candidate's
-// SMT check (see strategy.AnchorSymbolFor) - without this, every non-anchor
-// candidate would fail SMT confirmation for lack of reference data and show
-// a count of zero regardless of how signal-prone it actually is.
+// actually produce a signal under the rules as they stand today".
 //
 // A per-candidate fetch/backtest failure only zeroes that one candidate's
 // count (logged by the caller, if it cares) rather than aborting the whole
@@ -129,13 +124,6 @@ func AnnotateSignalFrequency(ctx context.Context, bclient *bingx.Client, candida
 	end := time.Now()
 	start := end.AddDate(0, 0, -SignalScanLookbackDays)
 
-	anchorCandles := make(map[string][]models.Candle, len(strategy.AnchorSymbols))
-	for _, a := range strategy.AnchorSymbols {
-		if c, err := bclient.KlinesRange(ctx, a, interval, start, end); err == nil {
-			anchorCandles[a] = c
-		}
-	}
-
 	out := make([]Candidate, len(candidates))
 	for i, c := range candidates {
 		out[i] = c
@@ -143,8 +131,7 @@ func AnnotateSignalFrequency(ctx context.Context, bclient *bingx.Client, candida
 		if err != nil || len(candles) == 0 {
 			continue
 		}
-		anchor := anchorCandles[strategy.AnchorSymbolFor(c.Symbol)]
-		trades := backtest.Run(candles, anchor, params, backtest.CostModel{}, nil)
+		trades := backtest.Run(candles, nil, params, backtest.CostModel{}, nil)
 		out[i].RecentSignalCount = len(trades)
 	}
 	return out

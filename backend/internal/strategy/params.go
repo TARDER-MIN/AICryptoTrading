@@ -7,7 +7,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// LoadParams reads the currently-active Silver Bullet parameters from the
+// LoadParams reads the currently-active HTF 3+1 parameters from the
 // single-row strategy_params table (migration 0005), falling back to
 // DefaultSBParams if the row is somehow missing or empty.
 func LoadParams(ctx context.Context, pool *pgxpool.Pool) (SBParams, error) {
@@ -20,51 +20,45 @@ func LoadParams(ctx context.Context, pool *pgxpool.Pool) (SBParams, error) {
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return DefaultSBParams(), err
 	}
-	backfillICT2026Defaults(&p)
+	backfillHTF3Plus1Defaults(&p)
 	// Risk/reward is a fixed strategy rule, not a tunable database value.
 	p.RiskRewardRatio = 1.5
 	return p, nil
 }
 
-// backfillICT2026Defaults fills in the ICT-2026 fields (displacement/OTE/
-// breaker/SMT) with their default values when loading a params row saved
-// before that upgrade existed - their JSON zero-values (0, false) would
-// otherwise silently neuter or disable those checks instead of applying the
-// intended defaults.
-func backfillICT2026Defaults(p *SBParams) {
+// backfillHTF3Plus1Defaults upgrades parameter JSON saved by the retired
+// M5-only strategy. Unknown legacy OTE/Breaker/SMT keys are ignored by JSON;
+// the new H1/CHOCH/retest fields receive safe defaults here.
+func backfillHTF3Plus1Defaults(p *SBParams) {
 	d := DefaultSBParams()
-	// A pre-upgrade row's JSON simply has none of these keys, so every one
-	// of them unmarshals to the Go zero value - check before overwriting any
-	// of them so this also detects "legacy row" for the two bools below,
-	// which have no other way to distinguish "key absent" from "explicitly
-	// false" once unmarshaled.
-	legacy := p.OTEMinRetrace == 0 && p.OTEMaxRetrace == 0 && p.MaxBarsForOTE == 0 && p.BreakerLookback == 0
-
+	if p.SwingLookback < 2 {
+		p.SwingLookback = d.SwingLookback
+	}
+	if p.MinFVGSizePct <= 0 {
+		p.MinFVGSizePct = d.MinFVGSizePct
+	}
+	if p.MaxBarsForSweep < 1 {
+		p.MaxBarsForSweep = d.MaxBarsForSweep
+	}
+	if p.StopBufferPct < 0 {
+		p.StopBufferPct = d.StopBufferPct
+	}
 	if p.MinDisplacementBodyPct == 0 {
 		p.MinDisplacementBodyPct = d.MinDisplacementBodyPct
 	}
 	if p.MaxOpposingWickPct == 0 {
 		p.MaxOpposingWickPct = d.MaxOpposingWickPct
 	}
-	if p.OTEMinRetrace == 0 {
-		p.OTEMinRetrace = d.OTEMinRetrace
+	if p.CHOCHLookback < 2 {
+		p.CHOCHLookback = d.CHOCHLookback
 	}
-	if p.OTEMaxRetrace == 0 {
-		p.OTEMaxRetrace = d.OTEMaxRetrace
+	if p.MaxBarsForRetest < 1 {
+		p.MaxBarsForRetest = d.MaxBarsForRetest
 	}
-	if p.MaxBarsForOTE == 0 {
-		p.MaxBarsForOTE = d.MaxBarsForOTE
-	}
-	if p.BreakerLookback == 0 {
-		p.BreakerLookback = d.BreakerLookback
-	}
-	// RequireBreakerConfluence/RequireSMTDivergence default to true - always
-	// the intended value for a legacy row (one saved before these keys
-	// existed at all), since "explicitly false" never occurred before this
-	// upgrade shipped.
+	legacy := p.OrderBlockLookback == 0
 	if legacy {
-		p.RequireBreakerConfluence = true
-		p.RequireSMTDivergence = true
+		p.OrderBlockLookback = d.OrderBlockLookback
+		p.RequireRejection = true
 	}
 }
 
@@ -97,6 +91,18 @@ func SaveOptimizationReport(ctx context.Context, pool *pgxpool.Pool, lastReport 
 	_, err := pool.Exec(ctx, `
 		UPDATE strategy_params
 		SET last_report = $1, updated_at = now()
+		WHERE id = 1
+	`, lastReport)
+	return err
+}
+
+// SaveLongOptimizationReport stores the optional one-year proxy study in its
+// own column. It intentionally cannot update params, optimized_at, or the
+// train/validation/test metrics that justified the active live parameters.
+func SaveLongOptimizationReport(ctx context.Context, pool *pgxpool.Pool, lastReport []byte) error {
+	_, err := pool.Exec(ctx, `
+		UPDATE strategy_params
+		SET last_long_report = $1, updated_at = now()
 		WHERE id = 1
 	`, lastReport)
 	return err

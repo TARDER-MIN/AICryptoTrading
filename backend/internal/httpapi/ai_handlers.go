@@ -34,18 +34,17 @@ func registerAIRoutes(g *gin.RouterGroup, d Deps) {
 		}
 
 		params := d.Trader.SBParams()
-		candles, err := d.Market.GetCandles(c.Request.Context(), body.Symbol, 100)
-		if err != nil || len(candles) < params.SwingLookback+5 {
+		candles, err := d.Market.GetCandles(c.Request.Context(), body.Symbol, 720)
+		if err != nil || len(candles) < strategy.RequiredM5History(params) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "not enough candle history yet for this symbol"})
 			return
 		}
-		anchorCandles, _ := d.Market.GetCandles(c.Request.Context(), strategy.AnchorSymbolFor(body.Symbol), 100)
-		setup := strategy.DecideSilverBullet(candles, anchorCandles, params, candles[len(candles)-1].Ts)
+		setup := strategy.DecideSilverBullet(candles, nil, params, candles[len(candles)-1].Ts)
 		if setup.Action == models.SignalHold {
 			c.JSON(http.StatusOK, gin.H{
 				"configured": true, "signal": nil,
 				"rule_action": setup.Action, "rule_reason": setup.Reason,
-				"skipped_reason": "目前沒有符合條件的Silver Bullet設定(sweep+FVG)，未呼叫AI",
+				"skipped_reason": "目前沒有符合條件的HTF 3+1設定，未呼叫AI",
 			})
 			return
 		}

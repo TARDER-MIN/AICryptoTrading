@@ -1,7 +1,7 @@
 // Package backtest replays historical candles through
 // strategy.DecideSilverBullet to simulate trades and compute performance
 // metrics - the engine internal/backtest/optimize.go's grid search uses to
-// pick (and validate) Silver Bullet parameters. There is no other backtest
+// pick (and validate) HTF 3+1 parameters. There is no other backtest
 // path in this project; it exists solely to support parameter tuning, not
 // as a general-purpose research tool.
 package backtest
@@ -50,7 +50,7 @@ func (m CostModel) normalized() CostModel {
 }
 
 type Trade struct {
-	Symbol               string
+	Symbol              string
 	EntryIdx, ExitIdx   int
 	EntryTs, ExitTs     time.Time
 	Side                models.SignalAction // BUY or SELL
@@ -65,13 +65,13 @@ type Trade struct {
 }
 
 type Result struct {
-	Trades      []Trade `json:"-"` // omitted from API responses (large); metrics below are what's shown
-	TotalTrades int     `json:"total_trades"`
-	WinCount    int     `json:"win_count"`
-	WinRate     float64 `json:"win_rate"`
-	TargetExits int     `json:"target_exits"`
-	StopExits   int     `json:"stop_exits"`
-	EndDataExits int    `json:"end_of_data_exits"`
+	Trades       []Trade `json:"-"` // omitted from API responses (large); metrics below are what's shown
+	TotalTrades  int     `json:"total_trades"`
+	WinCount     int     `json:"win_count"`
+	WinRate      float64 `json:"win_rate"`
+	TargetExits  int     `json:"target_exits"`
+	StopExits    int     `json:"stop_exits"`
+	EndDataExits int     `json:"end_of_data_exits"`
 	// Return/drawdown values are cumulative price-return percentage points
 	// on one unit of notional. They are not leveraged account-equity returns.
 	GrossReturnPct              float64 `json:"gross_return_pct"`
@@ -90,21 +90,23 @@ type Result struct {
 	FeeSource                   string  `json:"fee_source"`
 }
 
-// Run walks candles once, evaluating strategy.DecideSilverBullet at every
-// bar (using only candles up to and including that bar - no lookahead) and
-// simulating one trade at a time (no pyramiding within the backtest - a new
+// Run walks candles once, evaluating the HTF 3+1 strategy at every bar
+// (using only the precomputed H1 bias available at that M5 close - no
+// lookahead) and simulating one trade at a time (no pyramiding - a new
 // signal while a simulated position is open is ignored, mirroring the live
-// autotrader's "already_holding_direction" guard). anchorCandles is the SMT
-// reference symbol's full series (see strategy.AnchorSymbolFor) - pass nil
-// if unavailable, which fails SMT confirmation closed rather than panicking.
+// autotrader's "already_holding_direction" guard). anchorCandles is retained
+// only for call-site compatibility with older releases; HTF 3+1 does not use
+// SMT as a hard direction gate.
 // Returns every trade with EntryIdx/ExitIdx into the candle slice, so
 // callers can slice metrics by time range (see Metrics) without re-running
 // the simulation.
 func Run(candles []models.Candle, anchorCandles []models.Candle, params strategy.SBParams, costs CostModel, funding []FundingEvent) []Trade {
+	_ = anchorCandles
 	costs = costs.normalized()
 	var trades []Trade
 	var open *Trade
 	lastFVGTs := time.Time{}
+	htfBiases := strategy.PrepareHTFBiases(candles, params)
 
 	for i := range candles {
 		if open != nil {
@@ -135,7 +137,7 @@ func Run(candles []models.Candle, anchorCandles []models.Candle, params strategy
 		if i < 2 {
 			continue
 		}
-		sig := strategy.DecideSilverBullet(candles[:i+1], anchorCandles, params, candles[i].Ts)
+		sig := strategy.DecideSilverBulletWithBias(candles[:i+1], params, htfBiases[i], candles[i].Ts)
 		if sig.Action == models.SignalHold {
 			continue
 		}

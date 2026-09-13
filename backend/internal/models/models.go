@@ -33,7 +33,7 @@ type AISignal struct {
 	StopLoss    *float64     `json:"stop_loss,omitempty"`
 	TakeProfit  *float64     `json:"take_profit,omitempty"`
 	FundingRate *float64     `json:"funding_rate,omitempty"`
-	// SweepTs/SweepPrice/FVGTs/FVGLow/FVGHigh describe the Silver Bullet
+	// SweepTs/SweepPrice/FVGTs/FVGLow/FVGHigh describe the HTF 3+1
 	// setup (internal/strategy.SBSignal) this AI signal evaluated - carried
 	// through so the dashboard chart can mark the sweep/FVG even for
 	// signals loaded from history, not just ones just received live.
@@ -42,9 +42,9 @@ type AISignal struct {
 	FVGTs      *time.Time `json:"fvg_ts,omitempty"`
 	FVGLow     *float64   `json:"fvg_low,omitempty"`
 	FVGHigh    *float64   `json:"fvg_high,omitempty"`
-	// OTELow/OTEHigh/BreakerLow/BreakerHigh/SMT* describe the ICT-2026
-	// upgrade's additional confluence checks (internal/strategy.SBSignal) -
-	// carried through for the same reason as the sweep/FVG fields above.
+	// Legacy database/API fields remain readable for older signals. New HTF
+	// 3+1 signals store the M5 order-block body in BreakerLow/BreakerHigh;
+	// OTE/SMT are retired and left null.
 	OTELow          *float64  `json:"ote_low,omitempty"`
 	OTEHigh         *float64  `json:"ote_high,omitempty"`
 	BreakerLow      *float64  `json:"breaker_low,omitempty"`

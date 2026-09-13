@@ -43,17 +43,17 @@ type FinalTestDiagnostics struct {
 // parameters may differ by fold; no test block can influence its own
 // selection.
 type WalkForwardFold struct {
-	Index             int               `json:"index"`
-	SelectionStart    time.Time         `json:"selection_start"`
-	SelectionEnd      time.Time         `json:"selection_end"`
-	TestStart         time.Time         `json:"test_start"`
-	TestEnd           time.Time         `json:"test_end"`
-	SelectedParams    strategy.SBParams `json:"selected_params"`
-	CandidatesPassed  int               `json:"candidates_passed"`
-	UsedFallback      bool              `json:"used_fallback"`
-	SelectionMetrics  Result            `json:"selection_metrics"`
-	TestMetrics       Result            `json:"test_metrics"`
-	Passed            bool              `json:"passed"`
+	Index            int               `json:"index"`
+	SelectionStart   time.Time         `json:"selection_start"`
+	SelectionEnd     time.Time         `json:"selection_end"`
+	TestStart        time.Time         `json:"test_start"`
+	TestEnd          time.Time         `json:"test_end"`
+	SelectedParams   strategy.SBParams `json:"selected_params"`
+	CandidatesPassed int               `json:"candidates_passed"`
+	UsedFallback     bool              `json:"used_fallback"`
+	SelectionMetrics Result            `json:"selection_metrics"`
+	TestMetrics      Result            `json:"test_metrics"`
+	Passed           bool              `json:"passed"`
 }
 
 type WalkForwardReport struct {
@@ -90,27 +90,34 @@ type RobustSelectionReport struct {
 }
 
 type OptimizeReport struct {
-	Best                 strategy.SBParams    `json:"best_params"`
-	Train                Result               `json:"train_metrics"`
-	Validation           Result               `json:"validation_metrics"`
-	Test                 Result               `json:"test_metrics"`
-	CostModel            CostModel            `json:"cost_model"`
-	TopCandidates        []Candidate          `json:"top_candidates"`
-	CandidatesEvaluated  int                  `json:"candidates_evaluated"`
-	CandidatesPassed     int                  `json:"candidates_passed"`
-	TrainEnd             time.Time            `json:"train_end"`
-	TestStart            time.Time            `json:"test_start"`
-	HistoryDays          int                  `json:"history_days,omitempty"`
-	HistoryAvailableDays float64              `json:"history_available_days,omitempty"`
-	SymbolsTested        []string             `json:"symbols_tested,omitempty"`
-	HistoryStart         time.Time            `json:"history_start,omitempty"`
-	HistoryEnd           time.Time            `json:"history_end,omitempty"`
-	CandlesTested        int                  `json:"candles_tested,omitempty"`
-	FinalDiagnostics     FinalTestDiagnostics `json:"final_test_diagnostics"`
+	Best                 strategy.SBParams     `json:"best_params"`
+	Train                Result                `json:"train_metrics"`
+	Validation           Result                `json:"validation_metrics"`
+	Test                 Result                `json:"test_metrics"`
+	CostModel            CostModel             `json:"cost_model"`
+	TopCandidates        []Candidate           `json:"top_candidates"`
+	CandidatesEvaluated  int                   `json:"candidates_evaluated"`
+	CandidatesPassed     int                   `json:"candidates_passed"`
+	TrainEnd             time.Time             `json:"train_end"`
+	TestStart            time.Time             `json:"test_start"`
+	ReportKind           string                `json:"report_kind,omitempty"`
+	DataSource           string                `json:"data_source,omitempty"`
+	ResearchOnly         bool                  `json:"research_only,omitempty"`
+	RobustnessPassed     bool                  `json:"robustness_passed"`
+	ReusedPreviousSample bool                  `json:"reused_previous_sample,omitempty"`
+	HistoryDays          int                   `json:"history_days,omitempty"`
+	HistoryAvailableDays float64               `json:"history_available_days,omitempty"`
+	SymbolsTested        []string              `json:"symbols_tested,omitempty"`
+	SymbolsUnavailable   []string              `json:"symbols_unavailable,omitempty"`
+	SymbolsPartial       []string              `json:"symbols_partial,omitempty"`
+	HistoryStart         time.Time             `json:"history_start,omitempty"`
+	HistoryEnd           time.Time             `json:"history_end,omitempty"`
+	CandlesTested        int                   `json:"candles_tested,omitempty"`
+	FinalDiagnostics     FinalTestDiagnostics  `json:"final_test_diagnostics"`
 	RobustSelection      RobustSelectionReport `json:"robust_selection"`
-	WalkForward          WalkForwardReport    `json:"walk_forward"`
-	ParamsApplied        bool                 `json:"params_applied"`
-	ApplyBlockers        []string             `json:"apply_blockers"`
+	WalkForward          WalkForwardReport     `json:"walk_forward"`
+	ParamsApplied        bool                  `json:"params_applied"`
+	ApplyBlockers        []string              `json:"apply_blockers"`
 }
 
 // These thresholds are deliberately fixed in code rather than tuned against
@@ -133,13 +140,8 @@ const (
 // across every symbol in tradableSymbols (all fetched over the same
 // absolute date range - see internal/bingx.KlinesRange - so a single
 // global split timestamp at trainFrac of that range applies uniformly).
-// candlesBySymbol may additionally contain entries for symbols NOT in
-// tradableSymbols (namely strategy.AnchorSymbols, BTC/ETH, kept fresh for
-// SMT divergence lookups even when the AI daily watchlist selection drops
-// them from the tradable set) - those are only ever read as SMT reference
-// data via strategy.AnchorSymbolFor, never simulated as a tradeable symbol
-// themselves. The HTTP optimizer supplies an independent liquidity-ranked
-// crypto universe here; changing it does not alter the live watchlist. Every
+// The HTTP optimizer supplies an independent liquidity-ranked crypto
+// universe here; changing it does not alter the live watchlist. Every
 // candidate is simulated with backtest.Run per tradable symbol; trades are
 // pooled and split by EntryTs relative to the global timestamps. Candidate
 // ranking uses repeated chronological folds entirely inside the first 80%
@@ -170,8 +172,7 @@ func Optimize(candlesBySymbol map[string][]models.Candle, fundingBySymbol map[st
 			if !ok {
 				continue
 			}
-			anchorCandles := candlesBySymbol[strategy.AnchorSymbolFor(symbol)]
-			symbolTrades := Run(candles, anchorCandles, p, costs, fundingBySymbol[symbol])
+			symbolTrades := Run(candles, nil, p, costs, fundingBySymbol[symbol])
 			for i := range symbolTrades {
 				symbolTrades[i].Symbol = symbol
 			}
@@ -215,6 +216,7 @@ func Optimize(candlesBySymbol map[string][]models.Candle, fundingBySymbol map[st
 	report.WalkForward = buildWalkForwardReport(candidates, minTs, maxTs, costs)
 	report.ApplyBlockers = deploymentBlockers(report)
 	report.ParamsApplied = len(report.ApplyBlockers) == 0
+	report.RobustnessPassed = report.ParamsApplied
 
 	return report
 }
@@ -574,8 +576,9 @@ func timeRange(candlesBySymbol map[string][]models.Candle, symbols []string) (mi
 
 // paramGrid enumerates a deliberately small combination space so a full
 // optimize run (candidates x symbols x candles) stays fast in pure Go. Only
-// the original five dimensions are grid-searched; the ICT-2026 displacement/
-// OTE/breaker/SMT fields are held fixed at their DefaultSBParams() values on
+// the four structural/risk dimensions below are grid-searched; the M5 CHOCH,
+// displacement, first-retest and rejection fields remain fixed at their
+// DefaultSBParams() values on
 // every candidate (see strategy.SBParams doc comment) - they're
 // well-established structural thresholds, not free parameters to curve-fit,
 // and adding them to the grid would multiply the search space for no
@@ -583,9 +586,9 @@ func timeRange(candlesBySymbol map[string][]models.Candle, symbols []string) (mi
 func paramGrid() []strategy.SBParams {
 	base := strategy.DefaultSBParams()
 	var grid []strategy.SBParams
-	for _, swing := range []int{10, 15, 20} {
-		for _, fvgPct := range []float64{0.05, 0.1, 0.2} {
-			for _, sweepBars := range []int{2, 3, 5} {
+	for _, swing := range []int{8, 12, 20} {
+		for _, fvgPct := range []float64{0.02, 0.05, 0.1} {
+			for _, sweepBars := range []int{2, 4, 6} {
 				for _, stopBuf := range []float64{0.05, 0.1} {
 					// Keep the strategy's risk/reward fixed at 1:1.5.
 					for _, rr := range []float64{1.5} {

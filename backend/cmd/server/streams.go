@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"log"
-	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -11,24 +10,7 @@ import (
 	"cryptotrading/internal/autotrader"
 	"cryptotrading/internal/bingx"
 	"cryptotrading/internal/marketdata"
-	"cryptotrading/internal/strategy"
 )
-
-// withAnchors returns tradable with strategy.AnchorSymbols (BTC/ETH) merged
-// in, deduped - so their candles/funding keep streaming for SMT divergence
-// lookups even on a day the AI daily watchlist selection drops both of them
-// from the tradable set. autotrader.Trader.OnCandleClose separately guards
-// against ever auto-trading a symbol that isn't actually on the tradable
-// watchlist, so streaming an anchor-only symbol here is safe.
-func withAnchors(tradable []string) []string {
-	out := append([]string{}, tradable...)
-	for _, a := range strategy.AnchorSymbols {
-		if !slices.Contains(out, a) {
-			out = append(out, a)
-		}
-	}
-	return out
-}
 
 func watchlistSymbols(ctx context.Context, pool *pgxpool.Pool) ([]string, error) {
 	rows, err := pool.Query(ctx, `SELECT symbol FROM watchlist WHERE enabled ORDER BY added_at`)
@@ -49,12 +31,12 @@ func watchlistSymbols(ctx context.Context, pool *pgxpool.Pool) ([]string, error)
 }
 
 // seedHistory backfills each symbol's candle table with recent history via
-// REST so the chart and indicator windows (MACD needs ~26+9 bars to be
-// meaningful) aren't empty on first load. Safe to call repeatedly -
+// REST so the chart and the closed-H1/M5 execution windows are available on
+// first load. Safe to call repeatedly -
 // persistence is an upsert.
 func seedHistory(ctx context.Context, market *marketdata.Service, symbols []string, interval string) {
 	for _, symbol := range symbols {
-		if err := market.SeedHistory(ctx, symbol, interval, 200); err != nil {
+		if err := market.SeedHistory(ctx, symbol, interval, 720); err != nil {
 			log.Printf("seed history for %s: %v", symbol, err)
 		}
 	}
@@ -91,7 +73,7 @@ func streamMarketData(ctx context.Context, pool *pgxpool.Pool, market *marketdat
 			}
 		}
 
-		streamSet := withAnchors(symbols)
+		streamSet := symbols
 		seedHistory(ctx, market, streamSet, interval)
 
 		runCtx, cancelRun := context.WithCancel(ctx)

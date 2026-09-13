@@ -17,6 +17,7 @@ import (
 	"cryptotrading/internal/marketdata"
 	"cryptotrading/internal/models"
 	"cryptotrading/internal/positionstore"
+	"cryptotrading/internal/researchdata"
 	"cryptotrading/internal/strategy"
 	"cryptotrading/internal/ws"
 )
@@ -37,6 +38,7 @@ func main() {
 	defer pool.Close()
 
 	bclient := bingx.NewClient(cfg.BingXAPIKey, cfg.BingXAPISecret, cfg.BingXRESTBaseURL, cfg.BingXWSBaseURL)
+	researchClient := researchdata.NewClient(cfg.BinanceResearchBaseURL)
 	if err := bclient.SyncClock(ctx); err != nil {
 		log.Printf("binance: initial clock sync failed (signed requests may be rejected until this succeeds): %v", err)
 	}
@@ -93,7 +95,7 @@ func main() {
 
 	router := httpapi.NewRouter(httpapi.Deps{
 		Cfg: cfg, Pool: pool, Market: market, BingX: bclient, Filters: filters,
-		Positions: positions, Trader: trader, AI: aiClient, Hub: hub,
+		Positions: positions, Trader: trader, AI: aiClient, Research: researchClient, Hub: hub,
 		RestartMarketStream: triggerRestart,
 	})
 

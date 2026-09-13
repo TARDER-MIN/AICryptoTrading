@@ -81,4 +81,8 @@ export const api = {
   // history (180 days across a 20-symbol crypto-only liquidity pool) - can
   // take a while (deep history fetch + hundreds of backtest runs per symbol).
   optimizeStrategy: () => request<OptimizeReport>("/strategy/optimize", { method: "POST" }),
+  // Uses the same symbol universe/end date as the latest BingX run, but a
+  // full calendar year of public Binance USDT-perpetual proxy history. This
+  // research-only route can never change active parameters.
+  optimizeLongStrategy: () => request<OptimizeReport>("/strategy/optimize-long", { method: "POST" }),
 };

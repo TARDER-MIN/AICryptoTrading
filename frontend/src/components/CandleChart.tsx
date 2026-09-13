@@ -50,7 +50,8 @@ export function CandleChart({ candles, signals = [] }: Props) {
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeRef = useRef<ISeriesApi<"Histogram"> | null>(null);
-  // FVG/OTE/Breaker zones are each drawn as a pair of short horizontal-ish
+  // Current FVG/OB zones (plus legacy OTE data on old signals) are drawn as
+  // pairs of short horizontal-ish
   // line segments (top/bottom of the zone) rather than a filled box -
   // lightweight-charts v4 (the version this project uses) has no native
   // rectangle/box primitive, and two bounding lines is a reasonable
@@ -165,8 +166,8 @@ export function CandleChart({ candles, signals = [] }: Props) {
     seriesRef.current.setMarkers(markers);
   }, [signals]);
 
-  // Zone overlays: FVG (yellow), OTE retracement zone (blue), Breaker Block
-  // / Unicorn Model confluence zone (purple) - each a pair of short line
+  // Zone overlays: FVG (yellow), legacy OTE (blue), and the current M5 order
+  // block stored under the backward-compatible breaker fields (purple).
   // segments bounding the zone, spanning forward from its anchor time by
   // ~15 bars (or until data ends).
   useEffect(() => {
@@ -208,9 +209,7 @@ export function CandleChart({ candles, signals = [] }: Props) {
       if (s.fvg_ts != null && s.fvg_low != null && s.fvg_high != null) {
         addZone(toTime(s.fvg_ts), s.fvg_low, s.fvg_high, "rgba(234,179,8,0.6)");
       }
-      // OTE/Breaker zones are anchored at the same FVG time (that's when
-      // the setup - and its computed zones - first exists), drawn as
-      // separate overlays so they're visually distinguishable from the FVG.
+      // Zones are anchored at the FVG time, when the setup first exists.
       if (s.fvg_ts != null && s.ote_low != null && s.ote_high != null) {
         addZone(toTime(s.fvg_ts), s.ote_low, s.ote_high, "rgba(59,130,246,0.6)");
       }

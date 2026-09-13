@@ -23,8 +23,8 @@ type WatchlistCandidate struct {
 	ChangePct24h   float64
 	QuoteVolume24h float64
 	FundingRate    float64
-	// RecentSignalCount is how many Silver Bullet trades the currently-live
-	// ICT-2026 rules actually produced for this symbol over the last
+	// RecentSignalCount is how many HTF 3+1 trades the currently-live rules
+	// actually produced for this symbol over the last
 	// internal/watchlistai.SignalScanLookbackDays - a real backtest count,
 	// not a guess from volatility/change% (see internal/watchlistai.
 	// AnnotateSignalFrequency). This is the primary ranking signal.
@@ -38,7 +38,7 @@ type WatchlistPick struct {
 
 // SelectDailyWatchlist asks Claude to choose exactly n symbols from
 // candidates - primarily ranked by RecentSignalCount, an actual backtest
-// count of how often the currently-live ICT-2026 Silver Bullet rules fired
+// count of how often the currently-live HTF 3+1 rules fired
 // on that symbol over the last lookbackDays (see internal/watchlistai.
 // AnnotateSignalFrequency / SignalScanLookbackDays, the caller's source for
 // this number) - with a rationale for each.
@@ -50,7 +50,7 @@ func (c *Client) SelectDailyWatchlist(ctx context.Context, candidates []Watchlis
 	tool := anthropic.ToolParam{
 		Name: selectWatchlistTool,
 		Description: anthropic.String(fmt.Sprintf(
-			"回傳選出的 %d 檔最容易在目前的ICT2026 Silver Bullet規則下產生訊號的永續合約與各自理由。務必剛好回傳 %d 檔，且只能從提供的候選清單中選。", n, n)),
+			"回傳選出的 %d 檔最容易在目前HTF 3+1規則下產生訊號的永續合約與各自理由。務必剛好回傳 %d 檔，且只能從提供的候選清單中選。", n, n)),
 		InputSchema: anthropic.ToolInputSchemaParam{
 			Properties: map[string]any{
 				"picks": map[string]any{
@@ -110,7 +110,7 @@ func buildWatchlistPrompt(candidates []WatchlistCandidate, n int, lookbackDays i
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].RecentSignalCount > sorted[j].RecentSignalCount })
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "以下是候選永續合約清單（依recent_signal_count由高到低排序，共%d檔，皆為目前保證金×槓桿設定下可下單的合約）。recent_signal_count是拿目前上線中的完整ICT2026規則對這檔合約最近%d天的真實歷史K線回測出的實際訊號次數。請從中選出剛好%d檔最容易產生訊號的合約：\n\n", len(sorted), lookbackDays, n)
+	fmt.Fprintf(&b, "以下是候選永續合約清單（依recent_signal_count由高到低排序，共%d檔，皆為目前保證金×槓桿設定下可下單的合約）。recent_signal_count是拿目前上線中的完整HTF 3+1規則（已收線H1掃流動性定向，M5 CHOCH＋位移後Fresh FVG／OB首次回踩拒絕）對這檔合約最近%d天真實歷史K線回測出的訊號次數。請選出剛好%d檔最容易產生訊號的合約：\n\n", len(sorted), lookbackDays, n)
 	fmt.Fprintf(&b, "%-14s %20s %12s %10s %16s %10s\n", "合約", "recent_signal_count", "價格", "24h漲跌%", "24h成交金額(USDT)", "資金費率%")
 	for _, c := range sorted {
 		fmt.Fprintf(&b, "%-14s %20d %12.6g %9.2f%% %16.0f %9.4f%%\n",

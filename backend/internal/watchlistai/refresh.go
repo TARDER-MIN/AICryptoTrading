@@ -34,7 +34,7 @@ type Result struct {
 }
 
 // Refresh fetches the tradable-and-liquid candidate pool, backtest-scans
-// each candidate for how often the currently-live ICT-2026 Silver Bullet
+// each candidate for how often the currently-live HTF 3+1
 // rules (sbParams) actually fired on it recently (see
 // AnnotateSignalFrequency), asks Claude to pick pickCount of them -
 // primarily by that signal frequency, not surface stats - records the run

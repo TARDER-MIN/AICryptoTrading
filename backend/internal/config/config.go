@@ -13,17 +13,18 @@ type Config struct {
 	AnthropicAPIKey string
 	AnthropicModel  string
 
-	BingXAPIKey           string
-	BingXAPISecret        string
-	BingXRESTBaseURL      string
-	BingXWSBaseURL        string
-	KlineInterval         string
-	LeverageDefault       int
-	MarginUSD             float64
-	MarginType            string
-	AutotradeEnabledInit  bool
-	ListenKeyKeepaliveMin int
-	MaxAutoOrdersPerDay   int
+	BingXAPIKey            string
+	BingXAPISecret         string
+	BingXRESTBaseURL       string
+	BingXWSBaseURL         string
+	BinanceResearchBaseURL string
+	KlineInterval          string
+	LeverageDefault        int
+	MarginUSD              float64
+	MarginType             string
+	AutotradeEnabledInit   bool
+	ListenKeyKeepaliveMin  int
+	MaxAutoOrdersPerDay    int
 
 	// Backtest costs are percentage points per executed side. The live
 	// strategy enters at market and exits through market-trigger orders, so
@@ -55,19 +56,20 @@ func Load() Config {
 		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
 		AnthropicModel:  getenv("ANTHROPIC_MODEL", "claude-sonnet-5"),
 
-		BingXAPIKey:           os.Getenv("BINGX_API_KEY"),
-		BingXAPISecret:        os.Getenv("BINGX_API_SECRET"),
-		BingXRESTBaseURL:      getenv("BINGX_REST_BASE_URL", "https://open-api.bingx.com"),
-		BingXWSBaseURL:        getenv("BINGX_WS_BASE_URL", "wss://open-api-swap.bingx.com/swap-market"),
-		KlineInterval:         getenv("KLINE_INTERVAL", "5m"),
-		LeverageDefault:       getenvInt("LEVERAGE_DEFAULT", 3),
-		MarginUSD:             getenvFloat("MARGIN_USD", 5.0),
-		MarginType:            getenv("MARGIN_TYPE", "ISOLATED"),
-		AutotradeEnabledInit:  getenvBool("AUTOTRADE_ENABLED_DEFAULT", false),
-		ListenKeyKeepaliveMin: getenvInt("LISTEN_KEY_KEEPALIVE_MINUTES", 30),
-		MaxAutoOrdersPerDay:   getenvInt("MAX_AUTO_ORDERS_PER_DAY", 20),
-		BacktestTakerFeePct:   getenvNonNegativeFloat("BACKTEST_TAKER_FEE_PCT", 0.05),
-		BacktestSlippagePct:   getenvNonNegativeFloat("BACKTEST_SLIPPAGE_PCT", 0.02),
+		BingXAPIKey:            os.Getenv("BINGX_API_KEY"),
+		BingXAPISecret:         os.Getenv("BINGX_API_SECRET"),
+		BingXRESTBaseURL:       getenv("BINGX_REST_BASE_URL", "https://open-api.bingx.com"),
+		BingXWSBaseURL:         getenv("BINGX_WS_BASE_URL", "wss://open-api-swap.bingx.com/swap-market"),
+		BinanceResearchBaseURL: getenv("BINANCE_RESEARCH_BASE_URL", "https://fapi.binance.com"),
+		KlineInterval:          getenv("KLINE_INTERVAL", "5m"),
+		LeverageDefault:        getenvInt("LEVERAGE_DEFAULT", 3),
+		MarginUSD:              getenvFloat("MARGIN_USD", 5.0),
+		MarginType:             getenv("MARGIN_TYPE", "ISOLATED"),
+		AutotradeEnabledInit:   getenvBool("AUTOTRADE_ENABLED_DEFAULT", false),
+		ListenKeyKeepaliveMin:  getenvInt("LISTEN_KEY_KEEPALIVE_MINUTES", 30),
+		MaxAutoOrdersPerDay:    getenvInt("MAX_AUTO_ORDERS_PER_DAY", 20),
+		BacktestTakerFeePct:    getenvNonNegativeFloat("BACKTEST_TAKER_FEE_PCT", 0.05),
+		BacktestSlippagePct:    getenvNonNegativeFloat("BACKTEST_SLIPPAGE_PCT", 0.02),
 
 		WatchlistAIRefreshHourUTC: getenvInt("WATCHLIST_AI_REFRESH_HOUR_UTC", 0),
 
@@ -80,7 +82,7 @@ func Load() Config {
 // when AI_SIGNAL_SYSTEM_PROMPT isn't set in .env. Deliberately short (low
 // token cost per call) and framework-agnostic - it doesn't name or explain
 // ICT/Silver Bullet, just reviews whatever setup the rule engine detected.
-const defaultAISignalSystemPrompt = "你是加密貨幣永續合約短線交易訊號審核助手。下方是規則引擎偵測到、機械條件都已符合的候選交易設定，請判斷值不值得真的下單：有疑慮就選HOLD，不要照單全收。entry_hint/stop_loss/take_profit一律填實際價格、禁止填0，風險報酬比至少1.5倍。若有提供上一次訊號或目前持倉，一併納入判斷。務必呼叫emit_trade_signal工具回傳結果。"
+const defaultAISignalSystemPrompt = "你是加密貨幣永續合約短線交易訊號審核助手。下方是規則引擎偵測到、機械條件都已符合的HTF 3+1候選設定，請判斷值不值得下單：有疑慮就選HOLD，不要照單全收，也不得反向。entry_hint/stop_loss/take_profit必須照抄規則提供的實際價格、禁止填0；系統固定完整1:1.5風險報酬比。若有上一次訊號或目前持倉，一併納入判斷。務必呼叫emit_trade_signal工具回傳結果。"
 
 // defaultAIWatchlistSystemPrompt is internal/ai.SelectDailyWatchlist's
 // system prompt when AI_WATCHLIST_SYSTEM_PROMPT isn't set in .env.

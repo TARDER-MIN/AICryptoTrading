@@ -11,9 +11,9 @@
 // absolute notional ceiling, so raising leverage does proportionally
 // increase position size (an explicit user choice, not an oversight).
 //
-// Auto-trading is armed by default the moment the server starts with valid
-// BingX credentials (the user's explicit choice - no dry-run gate), but
-// several independent, non-intrusive guards still apply: a runtime kill
+// Auto-trading is paused by default and every strategy-research run forces
+// it back to paused. If the user explicitly arms it in the dashboard,
+// several independent guards still apply: a runtime kill
 // switch (internal/settings), a per-symbol cooldown and a daily order-count
 // circuit breaker (both defensive - belt-and-suspenders against a logic bug
 // causing repeat orders), and the exchange-filter sizing check enforced in
@@ -52,13 +52,13 @@ type Trader struct {
 	MinOrderInterval time.Duration
 
 	mu sync.Mutex
-	// sbParams is the currently-active Silver Bullet parameter set, loaded
+	// sbParams is the currently-active HTF 3+1 parameter set, loaded
 	// at startup via strategy.LoadParams and reloadable after a
 	// POST /api/strategy/optimize run (see SetSBParams).
 	sbParams strategy.SBParams
-	// lastSignaledFVG dedups Silver Bullet setups per symbol: a setup is
+	// lastSignaledFVG dedups HTF 3+1 setups per symbol: a setup is
 	// only acted on if its FVGTs is newer than the last one already acted
-	// on for that symbol (the Silver Bullet equivalent of the old MA-cross
+	// on for that symbol (the HTF 3+1 equivalent of the old MA-cross
 	// rule's "action transitioned" gate).
 	lastSignaledFVG map[string]time.Time
 	lastOrderAt     map[string]time.Time
@@ -80,7 +80,7 @@ func New(pool *pgxpool.Pool, market *marketdata.Service, bclient *bingx.Client, 
 	}
 }
 
-// SetSBParams atomically replaces the active Silver Bullet parameters -
+// SetSBParams atomically replaces the active HTF 3+1 parameters -
 // called after POST /api/strategy/optimize saves a new tuned set, so the
 // live pipeline picks it up without a process restart.
 func (t *Trader) SetSBParams(p strategy.SBParams) {
@@ -89,7 +89,7 @@ func (t *Trader) SetSBParams(p strategy.SBParams) {
 	t.mu.Unlock()
 }
 
-// SBParams returns the currently-active Silver Bullet parameters.
+// SBParams returns the currently-active HTF 3+1 parameters.
 func (t *Trader) SBParams() strategy.SBParams {
 	t.mu.Lock()
 	defer t.mu.Unlock()

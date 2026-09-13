@@ -13,6 +13,7 @@ import (
 	"cryptotrading/internal/config"
 	"cryptotrading/internal/marketdata"
 	"cryptotrading/internal/positionstore"
+	"cryptotrading/internal/researchdata"
 	"cryptotrading/internal/ws"
 )
 
@@ -25,6 +26,7 @@ type Deps struct {
 	Positions *positionstore.Store
 	Trader    *autotrader.Trader
 	AI        *ai.Client
+	Research  *researchdata.Client
 	Hub       *ws.Hub
 
 	// RestartMarketStream tells the live kline-streaming loop to re-read the

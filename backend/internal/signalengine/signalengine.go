@@ -52,7 +52,7 @@ func LoadPreviousSignal(ctx context.Context, pool *pgxpool.Pool, symbol string) 
 	return &p, nil
 }
 
-// GenerateAndBroadcast asks Claude to confirm or reject a Silver Bullet
+// GenerateAndBroadcast asks Claude to confirm or reject an HTF 3+1
 // setup (setup.Action must be BUY or SELL - the caller only invokes this on
 // a genuine new setup, see internal/autotrader/watcher.go), persists the
 // result to ai_signals (including the setup's sweep/FVG fields, so the
@@ -101,12 +101,10 @@ func GenerateAndBroadcast(ctx context.Context, d Deps, symbol string, setup stra
 	}
 	sweepTs, fvgTs := setup.SweepTs, setup.FVGTs
 	sweepPrice, fvgLow, fvgHigh := setup.SweepPrice, setup.FVGLow, setup.FVGHigh
-	oteLow, oteHigh := setup.OTELow, setup.OTEHigh
-	breakerLow, breakerHigh := setup.BreakerLow, setup.BreakerHigh
-	smtConfirmed := setup.SMTConfirmed
-	var smtAnchorSymbolPtr *string
-	if setup.SMTAnchorSymbol != "" {
-		smtAnchorSymbolPtr = &setup.SMTAnchorSymbol
+	var orderBlockLowPtr, orderBlockHighPtr *float64
+	if setup.BreakerHigh > setup.BreakerLow && setup.BreakerLow > 0 {
+		orderBlockLow, orderBlockHigh := setup.BreakerLow, setup.BreakerHigh
+		orderBlockLowPtr, orderBlockHighPtr = &orderBlockLow, &orderBlockHigh
 	}
 
 	var signalID int64
@@ -114,7 +112,7 @@ func GenerateAndBroadcast(ctx context.Context, d Deps, symbol string, setup stra
 	err = d.Pool.QueryRow(ctx, `
 		INSERT INTO ai_signals (symbol, candle_ts, action, confidence, entry_hint, stop_loss, take_profit, funding_rate, rationale, model, raw_response, sweep_ts, sweep_price, fvg_ts, fvg_low, fvg_high, ote_low, ote_high, breaker_low, breaker_high, smt_anchor_symbol, smt_confirmed)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22) RETURNING id, created_at
-	`, symbol, candleTs, result.Action, result.Confidence, result.EntryHint, result.StopLoss, result.TakeProfit, fundingRatePtr, result.Rationale, d.Model, json.RawMessage(result.RawJSON), sweepTs, sweepPrice, fvgTs, fvgLow, fvgHigh, oteLow, oteHigh, breakerLow, breakerHigh, smtAnchorSymbolPtr, smtConfirmed).Scan(&signalID, &createdAt)
+	`, symbol, candleTs, result.Action, result.Confidence, result.EntryHint, result.StopLoss, result.TakeProfit, fundingRatePtr, result.Rationale, d.Model, json.RawMessage(result.RawJSON), sweepTs, sweepPrice, fvgTs, fvgLow, fvgHigh, nil, nil, orderBlockLowPtr, orderBlockHighPtr, nil, nil).Scan(&signalID, &createdAt)
 	if err != nil {
 		return nil, err
 	}
@@ -126,8 +124,7 @@ func GenerateAndBroadcast(ctx context.Context, d Deps, symbol string, setup stra
 		FundingRate: fundingRatePtr,
 		Rationale:   result.Rationale, Model: d.Model, CreatedAt: createdAt,
 		SweepTs: &sweepTs, SweepPrice: &sweepPrice, FVGTs: &fvgTs, FVGLow: &fvgLow, FVGHigh: &fvgHigh,
-		OTELow: &oteLow, OTEHigh: &oteHigh, BreakerLow: &breakerLow, BreakerHigh: &breakerHigh,
-		SMTAnchorSymbol: smtAnchorSymbolPtr, SMTConfirmed: &smtConfirmed,
+		BreakerLow: orderBlockLowPtr, BreakerHigh: orderBlockHighPtr,
 	}
 	d.Hub.Broadcast(ws.Message{Type: "signal", Data: signal})
 	return &signal, nil

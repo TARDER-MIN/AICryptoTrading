@@ -86,7 +86,7 @@ function BreakdownTable({ rows, labelHeader }: { rows: BacktestBreakdown[]; labe
 }
 
 // Manually-triggered backtest + grid-search optimization (internal/backtest.Optimize)
-// for the Silver Bullet strategy's parameters - see internal/autotrader for
+// for the HTF 3+1 strategy's parameters - see internal/autotrader for
 // how the live pipeline picks up whatever this saves. One-time tuning per
 // the user's explicit choice, not a recurring scheduled job.
 export function StrategyOptimizePanel() {
@@ -99,8 +99,11 @@ export function StrategyOptimizePanel() {
     optimizedAt: string | null;
   } | null>(null);
   const [report, setReport] = useState<OptimizeReport | null>(null);
+  const [longReport, setLongReport] = useState<OptimizeReport | null>(null);
   const [loading, setLoading] = useState(false);
+  const [longLoading, setLongLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [longError, setLongError] = useState<string | null>(null);
 
   const tunedParamsSummary = (p: SBParams) =>
     t("strategyOptimize.tunedParamsSummary", {
@@ -114,10 +117,10 @@ export function StrategyOptimizePanel() {
   const fixedRulesSummary = (p: SBParams) =>
     t("strategyOptimize.fixedRulesSummary", {
       dispPct: (p.min_displacement_body_pct * 100).toFixed(0),
-      oteMin: (p.ote_min_retrace * 100).toFixed(0),
-      oteMax: (p.ote_max_retrace * 100).toFixed(0),
-      breakerReq: p.require_breaker_confluence ? t("strategyOptimize.required") : t("strategyOptimize.notRequired"),
-      smtReq: p.require_smt_divergence ? t("strategyOptimize.required") : t("strategyOptimize.notRequired"),
+      choch: p.choch_lookback,
+      retest: p.max_bars_for_retest,
+      ob: p.order_block_lookback,
+      rejection: p.require_rejection ? t("strategyOptimize.required") : t("strategyOptimize.notRequired"),
     });
 
   const reload = () => {
@@ -132,8 +135,23 @@ export function StrategyOptimizePanel() {
           optimizedAt: res.optimized_at,
         });
         if (res.last_report) setReport(res.last_report);
+        if (res.last_long_report) setLongReport(res.last_long_report);
       })
       .catch(() => undefined);
+  };
+
+  const runLongOptimize = async () => {
+    setLongLoading(true);
+    setLongError(null);
+    try {
+      const res = await api.optimizeLongStrategy();
+      setLongReport(res);
+      reload();
+    } catch (e) {
+      setLongError(String(e));
+    } finally {
+      setLongLoading(false);
+    }
   };
   useEffect(reload, []);
 
@@ -189,10 +207,16 @@ export function StrategyOptimizePanel() {
     <div className="panel">
       <h3>{t("strategyOptimize.title")}</h3>
       <p className="muted small">{t("strategyOptimize.description")}</p>
-      <button disabled={loading} onClick={runOptimize}>
-        {loading ? t("strategyOptimize.running") : t("strategyOptimize.run")}
-      </button>
+      <div className="button-row">
+        <button disabled={loading || longLoading} onClick={runOptimize}>
+          {loading ? t("strategyOptimize.running") : t("strategyOptimize.run")}
+        </button>
+        <button disabled={loading || longLoading} onClick={runLongOptimize}>
+          {longLoading ? t("strategyOptimize.longRunning") : t("strategyOptimize.longRun")}
+        </button>
+      </div>
       {error && <p className="error">{error}</p>}
+      {longError && <p className="error">{longError}</p>}
 
       {current && (
         <div style={{ marginTop: 12 }}>
@@ -270,6 +294,13 @@ export function StrategyOptimizePanel() {
               start: new Date(report.history_start).toLocaleString(),
               end: new Date(report.history_end).toLocaleString(),
             })}
+            <br />
+            {report.reused_previous_sample
+              ? t("strategyOptimize.sameSampleReused")
+              : t("strategyOptimize.freshSampleSelected")}
+            {(report.symbols_unavailable?.length ?? 0) > 0 && (
+              <><br />{t("strategyOptimize.recentUnavailable", { symbols: (report.symbols_unavailable ?? []).join(", ") })}</>
+            )}
             <br />
             {t("strategyOptimize.costSummary", {
               fee: report.cost_model.taker_fee_pct_per_side,
@@ -459,6 +490,116 @@ export function StrategyOptimizePanel() {
               </div>
               <p className="muted small">{t("strategyOptimize.walkForwardThreshold")}</p>
             </div>
+          )}
+        </div>
+      )}
+
+      {longReport && (
+        <div className="backtest-diagnostics long-range-report" style={{ marginTop: 16 }}>
+          <h4>{t("strategyOptimize.longTitle")}</h4>
+          <div className={`optimization-decision ${longReport.robustness_passed ? "passed" : "blocked"}`}>
+            <h4>
+              {longReport.robustness_passed
+                ? t("strategyOptimize.longPassedTitle")
+                : t("strategyOptimize.longFailedTitle")}
+            </h4>
+            <p className="small">
+              {longReport.robustness_passed
+                ? t("strategyOptimize.longPassedHelp")
+                : t("strategyOptimize.longFailedHelp")}
+            </p>
+            {!longReport.robustness_passed && (longReport.apply_blockers?.length ?? 0) > 0 && (
+              <ul className="small">
+                {longReport.apply_blockers?.map((code) => <li key={code}>{blockerText(code)}</li>)}
+              </ul>
+            )}
+          </div>
+
+          <p className="muted small">
+            {t("strategyOptimize.longSampleSummary", {
+              days: longReport.history_days,
+              actualDays: longReport.history_available_days.toFixed(1),
+              count: longReport.symbols_tested.length,
+              candles: longReport.candles_tested.toLocaleString(),
+              start: dateTime(longReport.history_start),
+              end: dateTime(longReport.history_end),
+            })}
+            <br />
+            {t("strategyOptimize.longProxyWarning")}
+            <br />
+            {t("strategyOptimize.longCostSummary", {
+              fee: longReport.cost_model.taker_fee_pct_per_side,
+              slippage: longReport.cost_model.estimated_slippage_pct_per_side,
+              roundTrip: ((longReport.cost_model.taker_fee_pct_per_side + longReport.cost_model.estimated_slippage_pct_per_side) * 2).toFixed(2),
+              funding: longReport.cost_model.funding_included
+                ? t("strategyOptimize.included")
+                : t("strategyOptimize.notIncluded"),
+            })}
+            {(longReport.symbols_unavailable?.length ?? 0) > 0 && (
+              <><br />{t("strategyOptimize.longUnavailable", { symbols: (longReport.symbols_unavailable ?? []).join(", ") })}</>
+            )}
+            {(longReport.symbols_partial?.length ?? 0) > 0 && (
+              <><br />{t("strategyOptimize.longPartial", { symbols: (longReport.symbols_partial ?? []).join(", ") })}</>
+            )}
+          </p>
+          <p className="muted small">
+            {t("strategyOptimize.proposedParams", { params: tunedParamsSummary(longReport.best_params) })}
+          </p>
+
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>{t("strategyOptimize.colPeriod")}</th>
+                  <th>{t("strategyOptimize.colTrades")}</th>
+                  <th>{t("strategyOptimize.colWinRate")}</th>
+                  <th>{t("strategyOptimize.colGrossReturn")}</th>
+                  <th>{t("strategyOptimize.colCosts")}</th>
+                  <th>{t("strategyOptimize.colNetReturn")}</th>
+                  <th>{t("strategyOptimize.colProfitFactor")}</th>
+                  <th>{t("strategyOptimize.colSharpe")}</th>
+                  <th>{t("strategyOptimize.colDrawdown")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <MetricsRow label={t("strategyOptimize.trainPeriod")} m={longReport.train_metrics} />
+                <MetricsRow label={t("strategyOptimize.validationPeriod")} m={longReport.validation_metrics} />
+                <MetricsRow label={t("strategyOptimize.testPeriod")} m={longReport.test_metrics} />
+              </tbody>
+            </table>
+          </div>
+
+          {longReport.walk_forward?.total_folds > 0 && (
+            <p className="small">
+              {t("strategyOptimize.walkForwardSummary", {
+                passed: longReport.walk_forward.passed_folds,
+                total: longReport.walk_forward.total_folds,
+                trades: longReport.walk_forward.aggregate_metrics.total_trades,
+                net: longReport.walk_forward.aggregate_metrics.total_return_pct.toFixed(2),
+                pf: longReport.walk_forward.aggregate_metrics.profit_factor.toFixed(2),
+                sharpe: longReport.walk_forward.aggregate_metrics.sharpe.toFixed(2),
+                dd: longReport.walk_forward.aggregate_metrics.max_drawdown_pct.toFixed(2),
+              })}
+            </p>
+          )}
+
+          {longReport.final_test_diagnostics && (
+            <>
+              <details open>
+                <summary>{t("strategyOptimize.bySideTitle")}</summary>
+                <BreakdownTable
+                  rows={longReport.final_test_diagnostics.by_side}
+                  labelHeader={t("strategyOptimize.colSide")}
+                />
+              </details>
+              <details>
+                <summary>{t("strategyOptimize.bySymbolTitle")}</summary>
+                <BreakdownTable
+                  rows={longReport.final_test_diagnostics.by_symbol}
+                  labelHeader={t("strategyOptimize.colSymbol")}
+                />
+              </details>
+            </>
           )}
         </div>
       )}

@@ -91,6 +91,17 @@ main {
   border-top: 1px solid var(--border);
 }
 
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.long-range-report {
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
 .optimization-decision {
   margin-bottom: 14px;
   padding: 10px 12px;

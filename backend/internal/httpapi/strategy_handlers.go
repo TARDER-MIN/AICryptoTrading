@@ -3,8 +3,8 @@ package httpapi
 import (
 	"encoding/json"
 	"log"
+	"math"
 	"net/http"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -20,6 +20,7 @@ import (
 
 const (
 	optimizeHistoryDays        = 180
+	longResearchYears          = 1
 	optimizeUniverseSize       = 20
 	optimizeTrainFraction      = 0.6
 	optimizeValidationFraction = 0.2
@@ -107,22 +108,33 @@ func registerStrategyRoutes(g *gin.RouterGroup, d Deps) {
 			return
 		}
 
-		var trainMetrics, validationMetrics, testMetrics, lastReport json.RawMessage
+		var trainMetrics, validationMetrics, testMetrics, lastReport, lastLongReport json.RawMessage
 		var optimizedAt *time.Time
-		_ = d.Pool.QueryRow(c.Request.Context(), `
-			SELECT train_metrics, validation_metrics, test_metrics, last_report, optimized_at
+		if err := d.Pool.QueryRow(c.Request.Context(), `
+			SELECT COALESCE(train_metrics, 'null'::jsonb),
+			       COALESCE(validation_metrics, 'null'::jsonb),
+			       COALESCE(test_metrics, 'null'::jsonb),
+			       COALESCE(last_report, 'null'::jsonb),
+			       COALESCE(last_long_report, 'null'::jsonb),
+			       optimized_at
 			FROM strategy_params WHERE id = 1
-		`).Scan(&trainMetrics, &validationMetrics, &testMetrics, &lastReport, &optimizedAt)
+		`).Scan(&trainMetrics, &validationMetrics, &testMetrics, &lastReport, &lastLongReport, &optimizedAt); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
 
 		c.JSON(http.StatusOK, gin.H{
 			"params": params, "train_metrics": trainMetrics, "validation_metrics": validationMetrics,
-			"test_metrics": testMetrics, "last_report": lastReport, "optimized_at": optimizedAt,
+			"test_metrics": testMetrics, "last_report": lastReport,
+			"last_long_report": lastLongReport, "optimized_at": optimizedAt,
 		})
 	})
 
-	// POST /strategy/optimize pulls deep history for an independent pool of
-	// the 20 most-liquid BingX crypto perpetuals, grid-searches Silver Bullet
-	// parameters against it. Robust selection runs only inside the first 80%
+	// POST /strategy/optimize reuses the exact symbols and date range from the
+	// previous report when available, making the new HTF 3+1 result directly
+	// comparable with the user's saved baseline. A clean installation instead
+	// selects the current 20 most-liquid BingX crypto perpetuals and requests
+	// up to 180 days. Robust selection runs only inside the first 80%
 	// development window; the final 20% and direction checks are fail-closed
 	// deployment gates. A rejected run saves its report without changing the
 	// active parameters. A passing run saves/reloads the winner, while this
@@ -134,54 +146,64 @@ func registerStrategyRoutes(g *gin.RouterGroup, d Deps) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "pause auto-trading before optimization: " + err.Error()})
 			return
 		}
+		if d.Cfg.KlineInterval != "5m" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "HTF 3+1 research requires KLINE_INTERVAL=5m"})
+			return
+		}
 
-		contracts, err := d.BingX.ExchangeInfo(ctx)
-		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "list BingX contracts: " + err.Error()})
+		var previousRaw json.RawMessage
+		var previous backtest.OptimizeReport
+		if err := d.Pool.QueryRow(ctx, `
+			SELECT COALESCE(last_report, 'null'::jsonb)
+			FROM strategy_params WHERE id = 1
+		`).Scan(&previousRaw); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		tickers, err := d.BingX.Ticker24hrAll(ctx)
-		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "list BingX tickers: " + err.Error()})
-			return
+		if len(previousRaw) > 0 {
+			_ = json.Unmarshal(previousRaw, &previous)
 		}
-		symbols := selectOptimizeSymbols(contracts, tickers, optimizeUniverseSize)
+
+		symbols := append([]string{}, previous.SymbolsTested...)
+		start, end := previous.HistoryStart, previous.HistoryEnd
+		reusedPreviousSample := len(symbols) > 0 && !start.IsZero() && end.After(start) && !end.After(time.Now().Add(time.Hour))
+		requestedHistoryDays := optimizeHistoryDays
+		if reusedPreviousSample {
+			requestedHistoryDays = int(math.Ceil(end.Sub(start).Hours() / 24))
+		} else {
+			contracts, err := d.BingX.ExchangeInfo(ctx)
+			if err != nil {
+				c.JSON(http.StatusBadGateway, gin.H{"error": "list BingX contracts: " + err.Error()})
+				return
+			}
+			tickers, err := d.BingX.Ticker24hrAll(ctx)
+			if err != nil {
+				c.JSON(http.StatusBadGateway, gin.H{"error": "list BingX tickers: " + err.Error()})
+				return
+			}
+			symbols = selectOptimizeSymbols(contracts, tickers, optimizeUniverseSize)
+			end = time.Now().UTC()
+			start = end.AddDate(0, 0, -optimizeHistoryDays)
+		}
 		if len(symbols) == 0 {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "no live crypto perpetuals available for backtesting"})
 			return
 		}
 
-		end := time.Now()
-		start := end.AddDate(0, 0, -optimizeHistoryDays)
-
-		// Always fetch the SMT anchor symbols (strategy.AnchorSymbols) too,
-		// even if either one falls outside the current top-20 tradable set -
-		// Optimize needs their history to backtest SMT
-		// divergence confirmation the same way live trading uses it.
 		fetchSet := append([]string{}, symbols...)
-		for _, a := range strategy.AnchorSymbols {
-			if !slices.Contains(fetchSet, a) {
-				fetchSet = append(fetchSet, a)
-			}
-		}
 
 		candlesBySymbol := make(map[string][]models.Candle, len(fetchSet))
+		unavailableSymbols := make([]string, 0)
 		for _, symbol := range fetchSet {
 			candles, err := d.BingX.KlinesRange(ctx, symbol, d.Cfg.KlineInterval, start, end)
 			if err != nil {
-				if slices.Contains(strategy.AnchorSymbols, symbol) {
-					c.JSON(http.StatusBadGateway, gin.H{"error": "fetch required SMT anchor history for " + symbol + ": " + err.Error()})
-					return
-				}
 				log.Printf("strategy optimize: skipping %s after history fetch failed: %v", symbol, err)
+				unavailableSymbols = append(unavailableSymbols, symbol)
 				continue
 			}
 			if len(candles) == 0 {
-				if slices.Contains(strategy.AnchorSymbols, symbol) {
-					c.JSON(http.StatusBadGateway, gin.H{"error": "no historical data returned for required SMT anchor " + symbol})
-					return
-				}
 				log.Printf("strategy optimize: skipping %s because no historical data was returned", symbol)
+				unavailableSymbols = append(unavailableSymbols, symbol)
 				continue
 			}
 			candlesBySymbol[symbol] = candles
@@ -258,8 +280,12 @@ func registerStrategyRoutes(g *gin.RouterGroup, d Deps) {
 			candlesBySymbol, fundingBySymbol, availableSymbols,
 			optimizeTrainFraction, optimizeValidationFraction, costs,
 		)
-		report.HistoryDays = optimizeHistoryDays
+		report.ReportKind = "recent_bingx"
+		report.DataSource = "bingx_usdt_perpetual"
+		report.ReusedPreviousSample = reusedPreviousSample
+		report.HistoryDays = requestedHistoryDays
 		report.SymbolsTested = availableSymbols
+		report.SymbolsUnavailable = unavailableSymbols
 		for _, symbol := range availableSymbols {
 			candles := candlesBySymbol[symbol]
 			report.CandlesTested += len(candles)
@@ -293,6 +319,182 @@ func registerStrategyRoutes(g *gin.RouterGroup, d Deps) {
 			d.Trader.SetSBParams(report.Best)
 		}
 
+		c.JSON(http.StatusOK, report)
+	})
+
+	// POST /strategy/optimize-long repeats the same HTF 3+1 research on the
+	// exact symbol universe and end date from the latest BingX run, but asks
+	// for one full calendar year of public Binance USDT-perpetual M5 history.
+	// BingX currently exposes a much shorter M5 range, so this is an explicitly
+	// labelled cross-venue proxy study. It is saved separately and can never
+	// change live parameters, even when every robustness gate passes.
+	g.POST("/strategy/optimize-long", func(c *gin.Context) {
+		ctx := c.Request.Context()
+		paused := false
+		if _, err := settings.Update(ctx, d.Pool, settings.UpdateInput{AutotradeEnabled: &paused}); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "pause auto-trading before long-range research: " + err.Error()})
+			return
+		}
+		if d.Cfg.KlineInterval != "5m" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "HTF 3+1 long-range research requires KLINE_INTERVAL=5m"})
+			return
+		}
+		if d.Research == nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "long-range research data client is unavailable"})
+			return
+		}
+
+		// Reuse the exact symbols and endpoint date from the immediately
+		// comparable BingX report whenever it exists. A clean install may run
+		// this button first, in which case the current top-20 universe is used.
+		var previousRaw json.RawMessage
+		var previous backtest.OptimizeReport
+		if err := d.Pool.QueryRow(ctx, `
+			SELECT COALESCE(last_report, 'null'::jsonb)
+			FROM strategy_params WHERE id = 1
+		`).Scan(&previousRaw); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if len(previousRaw) > 0 {
+			_ = json.Unmarshal(previousRaw, &previous)
+		}
+		symbols := append([]string{}, previous.SymbolsTested...)
+		end := previous.HistoryEnd
+		if len(symbols) == 0 {
+			contracts, err := d.BingX.ExchangeInfo(ctx)
+			if err != nil {
+				c.JSON(http.StatusBadGateway, gin.H{"error": "list BingX contracts: " + err.Error()})
+				return
+			}
+			tickers, err := d.BingX.Ticker24hrAll(ctx)
+			if err != nil {
+				c.JSON(http.StatusBadGateway, gin.H{"error": "list BingX tickers: " + err.Error()})
+				return
+			}
+			symbols = selectOptimizeSymbols(contracts, tickers, optimizeUniverseSize)
+		}
+		if len(symbols) == 0 {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "no crypto perpetual symbols available for long-range research"})
+			return
+		}
+		if end.IsZero() || end.After(time.Now().Add(time.Hour)) {
+			end = time.Now().UTC()
+		}
+		start := end.AddDate(-longResearchYears, 0, 0)
+
+		candlesBySymbol := make(map[string][]models.Candle, len(symbols))
+		availableSymbols := make([]string, 0, len(symbols))
+		unavailableSymbols := make([]string, 0)
+		partialSymbols := make([]string, 0)
+		for index, symbol := range symbols {
+			log.Printf("strategy long research: fetching %s (%d/%d)", symbol, index+1, len(symbols))
+			candles, err := d.Research.KlinesRange(ctx, symbol, d.Cfg.KlineInterval, start, end)
+			if err != nil || len(candles) == 0 {
+				if err != nil {
+					log.Printf("strategy long research: %s unavailable on Binance proxy: %v", symbol, err)
+				}
+				unavailableSymbols = append(unavailableSymbols, symbol)
+				continue
+			}
+			candlesBySymbol[symbol] = candles
+			availableSymbols = append(availableSymbols, symbol)
+			availableDays := candles[len(candles)-1].Ts.Sub(candles[0].Ts).Hours() / 24
+			if availableDays < 350 {
+				partialSymbols = append(partialSymbols, symbol)
+			}
+		}
+		if len(availableSymbols) == 0 {
+			c.JSON(http.StatusBadGateway, gin.H{
+				"error": "the Binance proxy returned no one-year history for the selected BingX symbols",
+			})
+			return
+		}
+
+		// Use the proxy venue's own historical funding settlements. As with the
+		// BingX run, a single incomplete series disables funding for the entire
+		// report so every symbol is compared on the same cost basis.
+		fundingBySymbol := make(map[string][]backtest.FundingEvent, len(availableSymbols))
+		fundingComplete := true
+		for _, symbol := range availableSymbols {
+			candles := candlesBySymbol[symbol]
+			rates, err := d.Research.FundingRatesRange(ctx, symbol, candles[0].Ts, candles[len(candles)-1].Ts)
+			covered := err == nil && len(rates) > 0 &&
+				!rates[0].Time.After(candles[0].Ts.Add(24*time.Hour)) &&
+				!rates[len(rates)-1].Time.Before(candles[len(candles)-1].Ts.Add(-24*time.Hour))
+			if !covered {
+				if err != nil {
+					log.Printf("strategy long research: funding unavailable for %s; omitting proxy funding: %v", symbol, err)
+				} else {
+					log.Printf("strategy long research: incomplete funding for %s; omitting proxy funding", symbol)
+				}
+				fundingComplete = false
+				fundingBySymbol = nil
+				break
+			}
+			converted := make([]backtest.FundingEvent, 0, len(rates))
+			for _, rate := range rates {
+				converted = append(converted, backtest.FundingEvent{
+					Ts: rate.Time, Rate: rate.Rate, MarkPrice: rate.MarkPrice,
+				})
+			}
+			fundingBySymbol[symbol] = converted
+		}
+
+		takerFeePct := d.Cfg.BacktestTakerFeePct
+		feeSource := "env_fallback"
+		if commission, err := d.BingX.UserCommissionRate(ctx); err != nil {
+			log.Printf("strategy long research: BingX account commission unavailable; using configured %.4f%%: %v", takerFeePct, err)
+		} else {
+			takerFeePct = commission.TakerCommissionRate * 100
+			feeSource = "bingx_account"
+		}
+		costs := backtest.CostModel{
+			TakerFeePctPerSide:          takerFeePct,
+			EstimatedSlippagePctPerSide: d.Cfg.BacktestSlippagePct,
+			FundingIncluded:             fundingComplete,
+			FundingSource:               "binance_proxy_history",
+			FeeSource:                   feeSource,
+		}
+		if !fundingComplete {
+			costs.FundingSource = "unavailable"
+		}
+
+		report := backtest.Optimize(
+			candlesBySymbol, fundingBySymbol, availableSymbols,
+			optimizeTrainFraction, optimizeValidationFraction, costs,
+		)
+		report.ReportKind = "long_range_proxy"
+		report.DataSource = "binance_usdt_perpetual_proxy"
+		report.ResearchOnly = true
+		report.HistoryDays = int(end.Sub(start).Hours() / 24)
+		report.SymbolsTested = availableSymbols
+		report.SymbolsUnavailable = unavailableSymbols
+		report.SymbolsPartial = partialSymbols
+		for _, symbol := range availableSymbols {
+			candles := candlesBySymbol[symbol]
+			report.CandlesTested += len(candles)
+			if report.HistoryStart.IsZero() || candles[0].Ts.Before(report.HistoryStart) {
+				report.HistoryStart = candles[0].Ts
+			}
+			last := candles[len(candles)-1].Ts
+			if report.HistoryEnd.IsZero() || last.After(report.HistoryEnd) {
+				report.HistoryEnd = last
+			}
+		}
+		if report.HistoryEnd.After(report.HistoryStart) {
+			report.HistoryAvailableDays = report.HistoryEnd.Sub(report.HistoryStart).Hours() / 24
+		}
+
+		// Optimize marks a passing report as applicable. Preserve that verdict
+		// separately, then hard-disable application for all proxy studies.
+		report.RobustnessPassed = report.ParamsApplied
+		report.ParamsApplied = false
+		reportJSON, _ := json.Marshal(report)
+		if err := strategy.SaveLongOptimizationReport(ctx, d.Pool, reportJSON); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(http.StatusOK, report)
 	})
 }
