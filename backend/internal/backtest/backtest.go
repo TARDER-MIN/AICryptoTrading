@@ -50,6 +50,7 @@ func (m CostModel) normalized() CostModel {
 }
 
 type Trade struct {
+	Symbol               string
 	EntryIdx, ExitIdx   int
 	EntryTs, ExitTs     time.Time
 	Side                models.SignalAction // BUY or SELL
@@ -68,6 +69,9 @@ type Result struct {
 	TotalTrades int     `json:"total_trades"`
 	WinCount    int     `json:"win_count"`
 	WinRate     float64 `json:"win_rate"`
+	TargetExits int     `json:"target_exits"`
+	StopExits   int     `json:"stop_exits"`
+	EndDataExits int    `json:"end_of_data_exits"`
 	// Return/drawdown values are cumulative price-return percentage points
 	// on one unit of notional. They are not leveraged account-equity returns.
 	GrossReturnPct              float64 `json:"gross_return_pct"`
@@ -254,6 +258,14 @@ func Metrics(trades []Trade, from, to time.Time, costs CostModel) Result {
 			grossWin += t.PnLPct
 		} else {
 			grossLoss += -t.PnLPct
+		}
+		switch t.ExitReason {
+		case "target":
+			res.TargetExits++
+		case "stop":
+			res.StopExits++
+		case "end_of_data":
+			res.EndDataExits++
 		}
 	}
 	res.TotalTradingCostPct = res.FeeCostPct + res.SlippageCostPct + res.FundingCostPct

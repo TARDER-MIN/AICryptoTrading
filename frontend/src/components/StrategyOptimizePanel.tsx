@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
 import { useI18n } from "../i18n/I18nContext";
-import type { BacktestMetrics, OptimizeReport, SBParams } from "../types";
+import type { BacktestBreakdown, BacktestMetrics, OptimizeReport, SBParams } from "../types";
 
 function MetricsRow({ label, m }: { label: string; m: BacktestMetrics | null | undefined }) {
   const { t } = useI18n();
@@ -30,6 +30,58 @@ function MetricsRow({ label, m }: { label: string; m: BacktestMetrics | null | u
       <td>{m.sharpe.toFixed(2)}</td>
       <td>{m.max_drawdown_pct.toFixed(2)}%</td>
     </tr>
+  );
+}
+
+function BreakdownTable({ rows, labelHeader }: { rows: BacktestBreakdown[]; labelHeader: string }) {
+  const { t } = useI18n();
+  if (!rows.length) return <p className="muted small">{t("strategyOptimize.noDiagnosticTrades")}</p>;
+  const displayLabel = (label: string) => {
+    if (label === "BUY") return t("strategyOptimize.sideBuy");
+    if (label === "SELL") return t("strategyOptimize.sideSell");
+    return label;
+  };
+  return (
+    <div className="table-scroll diagnostic-table">
+      <table>
+        <thead>
+          <tr>
+            <th>{labelHeader}</th>
+            <th>{t("strategyOptimize.colTrades")}</th>
+            <th>{t("strategyOptimize.colExitMix")}</th>
+            <th>{t("strategyOptimize.colWinRate")}</th>
+            <th>{t("strategyOptimize.colGrossReturn")}</th>
+            <th>{t("strategyOptimize.colCosts")}</th>
+            <th>{t("strategyOptimize.colNetReturn")}</th>
+            <th>{t("strategyOptimize.colProfitFactor")}</th>
+            <th>{t("strategyOptimize.colSharpe")}</th>
+            <th>{t("strategyOptimize.colDrawdown")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(({ label, metrics: m }) => (
+            <tr key={label}>
+              <td>{displayLabel(label)}</td>
+              <td>{m.total_trades}</td>
+              <td>
+                {t("strategyOptimize.exitMix", {
+                  target: m.target_exits ?? 0,
+                  stop: m.stop_exits ?? 0,
+                  end: m.end_of_data_exits ?? 0,
+                })}
+              </td>
+              <td>{m.win_rate.toFixed(1)}%</td>
+              <td className={m.gross_return_pct >= 0 ? "buy" : "sell"}>{m.gross_return_pct.toFixed(2)}%</td>
+              <td>{m.total_trading_cost_pct.toFixed(2)}%</td>
+              <td className={m.total_return_pct >= 0 ? "buy" : "sell"}>{m.total_return_pct.toFixed(2)}%</td>
+              <td>{m.profit_factor.toFixed(2)}</td>
+              <td>{m.sharpe.toFixed(2)}</td>
+              <td>{m.max_drawdown_pct.toFixed(2)}%</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -71,15 +123,16 @@ export function StrategyOptimizePanel() {
   const reload = () => {
     api
       .getStrategyParams()
-      .then((res) =>
+      .then((res) => {
         setCurrent({
           params: res.params,
           train: res.train_metrics,
           validation: res.validation_metrics,
           test: res.test_metrics,
           optimizedAt: res.optimized_at,
-        }),
-      )
+        });
+        if (res.last_report) setReport(res.last_report);
+      })
       .catch(() => undefined);
   };
   useEffect(reload, []);
@@ -97,6 +150,15 @@ export function StrategyOptimizePanel() {
       setLoading(false);
     }
   };
+
+  const dateTime = (value: string) => new Date(value).toLocaleString();
+  const shortParams = (p: SBParams) =>
+    t("strategyOptimize.walkForwardParams", {
+      swing: p.swing_lookback,
+      fvgPct: p.min_fvg_size_pct,
+      sweepBars: p.max_bars_for_sweep,
+      stopBuf: p.stop_buffer_pct,
+    });
 
   return (
     <div className="panel">
@@ -182,6 +244,110 @@ export function StrategyOptimizePanel() {
               testStart: new Date(report.test_start).toLocaleString(),
             })}
           </p>
+
+          {report.final_test_diagnostics && (
+            <div className="backtest-diagnostics">
+              <h4>{t("strategyOptimize.finalDiagnosticsTitle")}</h4>
+              <p className="muted small">
+                {t("strategyOptimize.finalDiagnosticsSummary", {
+                  total: report.test_metrics.total_trades,
+                  completed:
+                    report.test_metrics.total_trades - (report.test_metrics.end_of_data_exits ?? 0),
+                  end: report.test_metrics.end_of_data_exits ?? 0,
+                  net: report.final_test_diagnostics.completed_only_metrics.total_return_pct.toFixed(2),
+                  pf: report.final_test_diagnostics.completed_only_metrics.profit_factor.toFixed(2),
+                })}
+              </p>
+
+              <details open>
+                <summary>{t("strategyOptimize.bySideTitle")}</summary>
+                <BreakdownTable
+                  rows={report.final_test_diagnostics.by_side}
+                  labelHeader={t("strategyOptimize.colSide")}
+                />
+              </details>
+              <details>
+                <summary>{t("strategyOptimize.bySymbolTitle")}</summary>
+                <BreakdownTable
+                  rows={report.final_test_diagnostics.by_symbol}
+                  labelHeader={t("strategyOptimize.colSymbol")}
+                />
+              </details>
+              <details>
+                <summary>{t("strategyOptimize.byDayTitle")}</summary>
+                <BreakdownTable
+                  rows={report.final_test_diagnostics.by_day}
+                  labelHeader={t("strategyOptimize.colDateUTC")}
+                />
+              </details>
+            </div>
+          )}
+
+          {report.walk_forward?.total_folds > 0 && (
+            <div className="backtest-diagnostics">
+              <h4>{t("strategyOptimize.walkForwardTitle")}</h4>
+              <p className="muted small">{t("strategyOptimize.walkForwardHelp")}</p>
+              <p className="small">
+                {t("strategyOptimize.walkForwardSummary", {
+                  passed: report.walk_forward.passed_folds,
+                  total: report.walk_forward.total_folds,
+                  trades: report.walk_forward.aggregate_metrics.total_trades,
+                  net: report.walk_forward.aggregate_metrics.total_return_pct.toFixed(2),
+                  pf: report.walk_forward.aggregate_metrics.profit_factor.toFixed(2),
+                  sharpe: report.walk_forward.aggregate_metrics.sharpe.toFixed(2),
+                  dd: report.walk_forward.aggregate_metrics.max_drawdown_pct.toFixed(2),
+                })}
+              </p>
+              <div className="table-scroll diagnostic-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>{t("strategyOptimize.colFold")}</th>
+                      <th>{t("strategyOptimize.colSelectionRange")}</th>
+                      <th>{t("strategyOptimize.colTestRange")}</th>
+                      <th>{t("strategyOptimize.colSelectedParams")}</th>
+                      <th>{t("strategyOptimize.colTrades")}</th>
+                      <th>{t("strategyOptimize.colNetReturn")}</th>
+                      <th>{t("strategyOptimize.colProfitFactor")}</th>
+                      <th>{t("strategyOptimize.colSharpe")}</th>
+                      <th>{t("strategyOptimize.colDrawdown")}</th>
+                      <th>{t("strategyOptimize.colVerdict")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.walk_forward.folds.map((fold) => (
+                      <tr key={fold.index}>
+                        <td>{fold.index}</td>
+                        <td>{dateTime(fold.selection_start)} – {dateTime(fold.selection_end)}</td>
+                        <td>{dateTime(fold.test_start)} – {dateTime(fold.test_end)}</td>
+                        <td>
+                          {shortParams(fold.selected_params)}
+                          <span className="muted small">
+                            {t("strategyOptimize.candidatesPassedShort", { count: fold.candidates_passed })}
+                          </span>
+                        </td>
+                        <td>{fold.test_metrics.total_trades}</td>
+                        <td className={fold.test_metrics.total_return_pct >= 0 ? "buy" : "sell"}>
+                          {fold.test_metrics.total_return_pct.toFixed(2)}%
+                        </td>
+                        <td>{fold.test_metrics.profit_factor.toFixed(2)}</td>
+                        <td>{fold.test_metrics.sharpe.toFixed(2)}</td>
+                        <td>{fold.test_metrics.max_drawdown_pct.toFixed(2)}%</td>
+                        <td className={fold.passed ? "buy" : "sell"}>
+                          {fold.used_fallback
+                            ? t("strategyOptimize.foldFallback")
+                            : fold.passed
+                              ? t("strategyOptimize.foldPass")
+                              : t("strategyOptimize.foldFail")}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="muted small">{t("strategyOptimize.walkForwardThreshold")}</p>
+            </div>
+          )}
         </div>
       )}
     </div>

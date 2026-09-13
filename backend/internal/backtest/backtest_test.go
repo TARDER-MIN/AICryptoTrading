@@ -21,10 +21,10 @@ func mkCandle(ts time.Time, o, h, l, c float64) models.Candle {
 func TestMetrics_KnownTrades(t *testing.T) {
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	trades := []Trade{
-		{EntryTs: base, ExitTs: base.Add(time.Minute), Side: models.SignalBuy, GrossPnLPct: 2.0, PnLPct: 2.0},
-		{EntryTs: base.Add(time.Hour), ExitTs: base.Add(time.Hour + time.Minute), Side: models.SignalBuy, GrossPnLPct: -1.0, PnLPct: -1.0},
-		{EntryTs: base.Add(2 * time.Hour), ExitTs: base.Add(2*time.Hour + time.Minute), Side: models.SignalSell, GrossPnLPct: 3.0, PnLPct: 3.0},
-		{EntryTs: base.Add(3 * time.Hour), ExitTs: base.Add(3*time.Hour + time.Minute), Side: models.SignalBuy, GrossPnLPct: -1.0, PnLPct: -1.0},
+		{EntryTs: base, ExitTs: base.Add(time.Minute), Side: models.SignalBuy, ExitReason: "target", GrossPnLPct: 2.0, PnLPct: 2.0},
+		{EntryTs: base.Add(time.Hour), ExitTs: base.Add(time.Hour + time.Minute), Side: models.SignalBuy, ExitReason: "stop", GrossPnLPct: -1.0, PnLPct: -1.0},
+		{EntryTs: base.Add(2 * time.Hour), ExitTs: base.Add(2*time.Hour + time.Minute), Side: models.SignalSell, ExitReason: "target", GrossPnLPct: 3.0, PnLPct: 3.0},
+		{EntryTs: base.Add(3 * time.Hour), ExitTs: base.Add(3*time.Hour + time.Minute), Side: models.SignalBuy, ExitReason: "end_of_data", GrossPnLPct: -1.0, PnLPct: -1.0},
 	}
 
 	res := Metrics(trades, time.Time{}, time.Time{}, CostModel{})
@@ -52,6 +52,9 @@ func TestMetrics_KnownTrades(t *testing.T) {
 	// after trade2 equity=1 (dd=1), after trade3 equity=4 (peak=4), after trade4 equity=3 (dd=1).
 	if math.Abs(res.MaxDrawdownPct-1.0) > 1e-9 {
 		t.Errorf("MaxDrawdownPct = %.4f, want 1.0", res.MaxDrawdownPct)
+	}
+	if res.TargetExits != 2 || res.StopExits != 1 || res.EndDataExits != 1 {
+		t.Errorf("exit counts = target %d / stop %d / end %d, want 2/1/1", res.TargetExits, res.StopExits, res.EndDataExits)
 	}
 }
 

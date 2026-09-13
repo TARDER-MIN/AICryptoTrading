@@ -99,6 +99,22 @@ unleveraged price-return percentage points, not account-equity returns. The
 current-volume universe also introduces selection bias, so even the final-test
 result is evidence, not a promise of future profitability.
 
+The latest report also keeps the untouched final test explainable instead of
+showing only one aggregate number. It breaks that period down by contract,
+long/short direction, and UTC entry date; reports target, stop, and
+end-of-data exits; and separately shows completed trades so positions merely
+marked to market at the final candle cannot hide inside the total. The
+headline result still includes every trade to avoid selectively deleting bad
+outcomes.
+
+Four expanding-window walk-forward folds provide a second stability check.
+The full history is divided into five chronological blocks. Each fold selects
+parameters from only the blocks already available at that time and tests the
+next block; the four out-of-sample blocks are then combined. A fold passes
+only with at least 10 trades, positive net return, profit factor above 1, and
+positive per-trade Sharpe. Walk-forward diagnostics never feed back into the
+main 60/20/20 winner and never rewrite the untouched final-test result.
+
 ## Safety model
 
 Every manual and automatic order is sized through the exchange filter cache.

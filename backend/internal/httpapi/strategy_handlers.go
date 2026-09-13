@@ -106,15 +106,16 @@ func registerStrategyRoutes(g *gin.RouterGroup, d Deps) {
 			return
 		}
 
-		var trainMetrics, validationMetrics, testMetrics json.RawMessage
+		var trainMetrics, validationMetrics, testMetrics, lastReport json.RawMessage
 		var optimizedAt *time.Time
 		_ = d.Pool.QueryRow(c.Request.Context(), `
-			SELECT train_metrics, validation_metrics, test_metrics, optimized_at FROM strategy_params WHERE id = 1
-		`).Scan(&trainMetrics, &validationMetrics, &testMetrics, &optimizedAt)
+			SELECT train_metrics, validation_metrics, test_metrics, last_report, optimized_at
+			FROM strategy_params WHERE id = 1
+		`).Scan(&trainMetrics, &validationMetrics, &testMetrics, &lastReport, &optimizedAt)
 
 		c.JSON(http.StatusOK, gin.H{
 			"params": params, "train_metrics": trainMetrics, "validation_metrics": validationMetrics,
-			"test_metrics": testMetrics, "optimized_at": optimizedAt,
+			"test_metrics": testMetrics, "last_report": lastReport, "optimized_at": optimizedAt,
 		})
 	})
 
@@ -273,7 +274,8 @@ func registerStrategyRoutes(g *gin.RouterGroup, d Deps) {
 		trainJSON, _ := json.Marshal(report.Train)
 		validJSON, _ := json.Marshal(report.Validation)
 		testJSON, _ := json.Marshal(report.Test)
-		if err := strategy.SaveParams(ctx, d.Pool, report.Best, trainJSON, validJSON, testJSON); err != nil {
+		reportJSON, _ := json.Marshal(report)
+		if err := strategy.SaveParams(ctx, d.Pool, report.Best, trainJSON, validJSON, testJSON, reportJSON); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}

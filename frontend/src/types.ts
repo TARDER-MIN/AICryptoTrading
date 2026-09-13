@@ -167,6 +167,9 @@ export interface BacktestMetrics {
   total_trades: number;
   win_count: number;
   win_rate: number;
+  target_exits: number;
+  stop_exits: number;
+  end_of_data_exits: number;
   gross_return_pct: number;
   fee_cost_pct: number;
   slippage_cost_pct: number;
@@ -188,6 +191,7 @@ export interface StrategyParamsResponse {
   train_metrics: BacktestMetrics | null;
   validation_metrics: BacktestMetrics | null;
   test_metrics: BacktestMetrics | null;
+  last_report: OptimizeReport | null;
   optimized_at: string | null;
 }
 
@@ -195,6 +199,39 @@ export interface OptimizeCandidate {
   params: SBParams;
   train: BacktestMetrics;
   validation: BacktestMetrics;
+}
+
+export interface BacktestBreakdown {
+  label: string;
+  metrics: BacktestMetrics;
+}
+
+export interface FinalTestDiagnostics {
+  completed_only_metrics: BacktestMetrics;
+  by_symbol: BacktestBreakdown[];
+  by_side: BacktestBreakdown[];
+  by_day: BacktestBreakdown[];
+}
+
+export interface WalkForwardFold {
+  index: number;
+  selection_start: string;
+  selection_end: string;
+  test_start: string;
+  test_end: string;
+  selected_params: SBParams;
+  candidates_passed: number;
+  used_fallback: boolean;
+  selection_metrics: BacktestMetrics;
+  test_metrics: BacktestMetrics;
+  passed: boolean;
+}
+
+export interface WalkForwardReport {
+  folds: WalkForwardFold[];
+  aggregate_metrics: BacktestMetrics;
+  passed_folds: number;
+  total_folds: number;
 }
 
 export interface OptimizeReport {
@@ -220,6 +257,8 @@ export interface OptimizeReport {
   history_start: string;
   history_end: string;
   candles_tested: number;
+  final_test_diagnostics: FinalTestDiagnostics;
+  walk_forward: WalkForwardReport;
 }
 
 export interface FundingUpdate {

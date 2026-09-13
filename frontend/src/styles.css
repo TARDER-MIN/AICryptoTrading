@@ -85,6 +85,37 @@ main {
   overflow-x: auto;
 }
 
+.backtest-diagnostics {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.backtest-diagnostics h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+.backtest-diagnostics details {
+  margin-top: 8px;
+}
+
+.backtest-diagnostics summary {
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.diagnostic-table {
+  margin-top: 6px;
+}
+
+.diagnostic-table td .muted {
+  display: block;
+  margin-top: 2px;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
