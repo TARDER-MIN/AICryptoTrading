@@ -1,29 +1,22 @@
-// Package strategy implements the user's HTF 3+1 execution model for
-// crypto perpetuals:
+// Package strategy implements the user's location-first HTF 3+1 execution
+// model for crypto perpetuals:
 //
-//  1. A fully-closed H1 candle sweeps external HTF liquidity (the previous
-//     UTC-day high/low or the extreme of prior completed H4 candles) and
-//     closes back inside. Sweeping/reclaiming above sets SELL bias; sweeping
-//     and reclaiming below sets BUY bias.
+//  1. Completed H4 candles define market structure, premium/discount and
+//     fresh SNR/FVG/OB context. Longs are forbidden in confirmed bearish H4
+//     structure; shorts are forbidden in confirmed bullish H4 structure.
+//  2. A fully closed H1 candle must raid external liquidity and reclaim it
+//     inside the correct H4 location: upper liquidity -> SELL, lower -> BUY.
+//  3. M5 must close through a confirmed pivot (CHOCH) with ATR/volume
+//     displacement. The same displacement leg must create a fresh FVG; its
+//     last opposite candle is the only eligible order block.
+//  4. Entry occurs only on the first rejecting retest. A non-rejecting first
+//     touch consumes the zone.
+//  5. The fixed 1:1.5 target must clear costs and must not cross the nearest
+//     opposing H4/H1 structure.
 //
-//  2. After the H1 sweep is confirmed, M5 must print a genuine CHOCH
-//     (Change of Character / structure shift) with ATR- and volume-confirmed
-//     displacement.
-//
-//  3. The displacement must leave a fresh M5 FVG; the last opposite candle
-//     before displacement is also tracked as the M5 order block.
-//
-//  4. Entry occurs only on the first retest of the fresh FVG or order block
-//     when that retest candle rejects the zone. A first touch without a
-//     qualifying rejection consumes that zone permanently.
-//
-//  5. The planned target must be large enough relative to round-trip fees and
-//     slippage; tiny nominal 1:1.5 setups that costs dominate are rejected.
-//
-// There is deliberately no time-of-day gate. Risk/reward is fixed at 1:1.5.
-// H1 candles are derived from M5 data using only completed H1 buckets, so
-// both live evaluation and historical replay are free of higher-timeframe
-// lookahead.
+// There is deliberately no time-of-day gate; reports split results into UTC
+// entry blocks instead. Every HTF input uses completed buckets only, keeping
+// live evaluation and historical replay free of lookahead.
 package strategy
 
 import (
@@ -39,7 +32,7 @@ const (
 	fixedRiskRewardRatio = 1.5
 	// StrategyVersion is persisted with each research report so the dashboard
 	// can distinguish an old baseline from results produced by these rules.
-	StrategyVersion = "htf_external_liquidity_v2"
+	StrategyVersion = "htf_location_3plus1_v3"
 )
 
 // AnchorSymbols and AnchorSymbolFor remain for source compatibility with the
@@ -66,6 +59,12 @@ type SBParams struct {
 	StopBufferPct   float64 `json:"stop_buffer_pct"`    // stop beyond the selected M5 FVG/OB edge
 	RiskRewardRatio float64 `json:"risk_reward_ratio"`  // fixed to 1.5 when loaded/saved
 
+	HTFStructureLookback      int     `json:"htf_structure_lookback"`       // completed H4 bars used for range/structure context
+	HTFPivotStrength          int     `json:"htf_pivot_strength"`           // completed H4 bars required on each side of a pivot
+	HTFZoneATRMultiple        float64 `json:"htf_zone_atr_multiple"`        // maximum distance from H4 SNR edge, in H4 ATR
+	CHOCHPivotStrength        int     `json:"choch_pivot_strength"`         // completed M5 bars required on each side of a pivot
+	TargetBarrierBufferATR    float64 `json:"target_barrier_buffer_atr"`    // clearance kept before opposing H4/H1 structure
+
 	MinHTFSweepATR            float64 `json:"min_htf_sweep_atr"`             // wick penetration beyond liquidity, in H1 ATR
 	MinHTFReclaimATR          float64 `json:"min_htf_reclaim_atr"`           // close back inside liquidity, in H1 ATR
 	MinDisplacementBodyPct    float64 `json:"min_displacement_body_pct"`     // M5 displacement body/range threshold
@@ -90,6 +89,12 @@ func DefaultSBParams() SBParams {
 		StopBufferPct:   0.1,
 		RiskRewardRatio: 1.5,
 
+		HTFStructureLookback:   12,
+		HTFPivotStrength:       2,
+		HTFZoneATRMultiple:     0.75,
+		CHOCHPivotStrength:     2,
+		TargetBarrierBufferATR: 0.10,
+
 		MinHTFSweepATR:            0.05,
 		MinHTFReclaimATR:          0.10,
 		MinDisplacementBodyPct:    0.6,
@@ -98,7 +103,7 @@ func DefaultSBParams() SBParams {
 		MinDisplacementVolume:     1.2,
 		DisplacementATRLookback:   14,
 		DisplacementVolLookback:   20,
-		CHOCHLookback:             5,
+		CHOCHLookback:             12,
 		MaxBarsForRetest:          6,
 		OrderBlockLookback:        10,
 		RequireRejection:          true,
@@ -115,6 +120,12 @@ func NormalizeParams(params SBParams) SBParams {
 	d := DefaultSBParams()
 	// These are fixed quality floors, not optimizer knobs. Persisted legacy
 	// JSON may only make them stricter, never weaken the current strategy.
+	params.HTFStructureLookback = max(params.HTFStructureLookback, 4)
+	params.HTFPivotStrength = max(params.HTFPivotStrength, d.HTFPivotStrength)
+	params.HTFZoneATRMultiple = math.Min(params.HTFZoneATRMultiple, d.HTFZoneATRMultiple)
+	params.CHOCHPivotStrength = max(params.CHOCHPivotStrength, d.CHOCHPivotStrength)
+	params.CHOCHLookback = max(params.CHOCHLookback, params.CHOCHPivotStrength*2+1)
+	params.TargetBarrierBufferATR = math.Max(params.TargetBarrierBufferATR, d.TargetBarrierBufferATR)
 	params.MinHTFSweepATR = math.Max(params.MinHTFSweepATR, d.MinHTFSweepATR)
 	params.MinHTFReclaimATR = math.Max(params.MinHTFReclaimATR, d.MinHTFReclaimATR)
 	params.MinDisplacementBodyPct = math.Max(params.MinDisplacementBodyPct, d.MinDisplacementBodyPct)
@@ -123,7 +134,6 @@ func NormalizeParams(params SBParams) SBParams {
 	params.MinDisplacementVolume = math.Max(params.MinDisplacementVolume, d.MinDisplacementVolume)
 	params.DisplacementATRLookback = max(params.DisplacementATRLookback, d.DisplacementATRLookback)
 	params.DisplacementVolLookback = max(params.DisplacementVolLookback, d.DisplacementVolLookback)
-	params.CHOCHLookback = max(params.CHOCHLookback, d.CHOCHLookback)
 	params.RequireRejection = true
 	params.MinTargetCostMultiple = math.Max(params.MinTargetCostMultiple, d.MinTargetCostMultiple)
 	params.RiskRewardRatio = fixedRiskRewardRatio
@@ -136,7 +146,8 @@ func RequiredM5History(params SBParams) int {
 	params = NormalizeParams(params)
 	// Need enough history for the previous UTC day and the configured number
 	// of fully closed H4 bars, plus the M5 execution window.
-	h1Bars := max(24, max(2, params.SwingLookback)*4) + 2
+	h4Bars := max(max(2, params.SwingLookback), params.HTFStructureLookback)
+	h1Bars := max(24, h4Bars*4) + 2
 	m5Execution := max(max(params.DisplacementATRLookback, params.DisplacementVolLookback), params.CHOCHLookback)
 	return h1Bars*12 + max(1, params.MaxBarsForRetest) + max(2, m5Execution) + 3
 }
@@ -148,6 +159,15 @@ type HTFBias struct {
 	Location    string
 	ConfirmedAt time.Time
 	Valid       bool
+
+	HTFTrend          string
+	HTFContext        string
+	RangeLow          float64
+	RangeHigh         float64
+	Equilibrium       float64
+	SweepATR          float64
+	TargetBarrier     float64
+	TargetBarrierName string
 }
 
 type SBSignal struct {
@@ -196,6 +216,15 @@ type h1Sweep struct {
 	Location  string
 	Confirmed time.Time
 	H1Index   int
+
+	HTFTrend          string
+	HTFContext        string
+	RangeLow          float64
+	RangeHigh         float64
+	Equilibrium       float64
+	SweepATR          float64
+	TargetBarrier     float64
+	TargetBarrierName string
 }
 
 // PrepareHTFBiases precomputes the no-lookahead H1 direction available at
@@ -241,6 +270,10 @@ func PrepareHTFBiases(candles []models.Candle, params SBParams) []HTFBias {
 		out[i] = HTFBias{
 			Action: latest.Action, SweepTs: latest.Ts, SweepPrice: latest.Price,
 			Location: latest.Location, ConfirmedAt: latest.Confirmed, Valid: true,
+			HTFTrend: latest.HTFTrend, HTFContext: latest.HTFContext,
+			RangeLow: latest.RangeLow, RangeHigh: latest.RangeHigh, Equilibrium: latest.Equilibrium,
+			SweepATR: latest.SweepATR, TargetBarrier: latest.TargetBarrier,
+			TargetBarrierName: latest.TargetBarrierName,
 		}
 	}
 	return out
@@ -297,12 +330,12 @@ func DecideSilverBulletWithBias(candles []models.Candle, params SBParams, bias H
 		if !displacementOK {
 			continue
 		}
-		chochLevel, chochOK := confirmsCHOCH(candles, fvgIdx-1, params.CHOCHLookback, bullish)
+		chochLevel, chochOK := confirmsCHOCH(candles, fvgIdx-1, params.CHOCHLookback, params.CHOCHPivotStrength, bullish)
 		if !chochOK {
 			continue
 		}
 
-		obLow, obHigh, obFound := findOrderBlock(candles, fvgIdx-1, params.OrderBlockLookback, bullish)
+		obLow, obHigh, obFound := findOrderBlock(candles, fvgIdx-1, params.OrderBlockLookback, bullish, bias.ConfirmedAt)
 		zones := []entryZone{{low: gapLow, high: gapHigh, kind: "FVG", formedAt: fvgIdx}}
 		if obFound {
 			// The order block exists as soon as displacement closes. Therefore
@@ -335,18 +368,27 @@ func DecideSilverBulletWithBias(candles []models.Candle, params SBParams, bias H
 			if targetDistancePct < minTargetDistancePct {
 				continue
 			}
+			if !targetPathClear(entry, target, bias, params) {
+				continue
+			}
 
 			direction := "做多"
 			sweepSide := "前低"
 			if !bullish {
 				direction, sweepSide = "做空", "前高"
 			}
+			barrier := "前方無未突破HTF結構"
+			if bias.TargetBarrier > 0 {
+				barrier = fmt.Sprintf("%s %.6g", bias.TargetBarrierName, bias.TargetBarrier)
+			}
 			return SBSignal{
 				Action: bias.Action,
 				Reason: fmt.Sprintf(
-					"H1在%s掃%s後收回定向%s＋M5 CHOCH突破%.6g＋ATR %.1fx／量能 %.1fx 位移FVG(實體%.0f%%)＋Fresh %s首次回踩拒絕＋目標距離%.2f%%≥成本%.2f%%×%.0f，RR固定1:1.5",
-					bias.Location, sweepSide, direction, chochLevel, atrMultiple, volumeMultiple, bodyPct*100, zone.kind,
-					targetDistancePct, params.EstimatedRoundTripCostPct, params.MinTargetCostMultiple,
+					"H4%s／%s(區間%.6g-%.6g)＋H1在%s掃%s後收回定向%s＋M5確認擺動CHOCH突破%.6g＋ATR %.1fx／量能 %.1fx同位移FVG(實體%.0f%%)＋Fresh %s首次回踩拒絕＋1:1.5路徑未先撞%s＋目標距離%.2f%%≥成本%.2f%%×%.0f",
+					bias.HTFTrend, bias.HTFContext, bias.RangeLow, bias.RangeHigh,
+					bias.Location, sweepSide, direction, chochLevel, atrMultiple, volumeMultiple,
+					bodyPct*100, zone.kind, barrier, targetDistancePct,
+					params.EstimatedRoundTripCostPct, params.MinTargetCostMultiple,
 				),
 				SweepTs: bias.SweepTs, SweepPrice: bias.SweepPrice,
 				FVGTs: c2.Ts, FVGLow: gapLow, FVGHigh: gapHigh,
@@ -360,7 +402,24 @@ func DecideSilverBulletWithBias(candles []models.Candle, params SBParams, bias H
 			}
 		}
 	}
-	return SBSignal{Action: models.SignalHold, Reason: "HTF外部流動性方向成立，但尚無符合ATR／量能／成本門檻的M5 CHOCH＋Fresh FVG／OB首次回踩拒絕"}
+	return SBSignal{Action: models.SignalHold, Reason: "H4位置與H1掃掠方向成立，但尚無確認擺動CHOCH＋同位移Fresh FVG／OB首次回踩拒絕，或1:1.5目標路徑受阻"}
+}
+
+func targetPathClear(entry, target float64, bias HTFBias, params SBParams) bool {
+	if entry <= 0 || target <= 0 || bias.TargetBarrier <= 0 || bias.SweepATR <= 0 {
+		return false
+	}
+	buffer := bias.SweepATR * params.TargetBarrierBufferATR
+	if bias.Action == models.SignalBuy {
+		if bias.TargetBarrier <= entry+buffer {
+			return true // the displacement/retest already closed beyond that structure
+		}
+		return target+buffer < bias.TargetBarrier
+	}
+	if bias.TargetBarrier >= entry-buffer {
+		return true
+	}
+	return target-buffer > bias.TargetBarrier
 }
 
 type entryZone struct {
@@ -457,32 +516,58 @@ func averageVolumeBefore(candles []models.Candle, idx, lookback int) float64 {
 	return total / float64(lookback)
 }
 
-func confirmsCHOCH(candles []models.Candle, displacementIdx, lookback int, bullish bool) (float64, bool) {
-	if lookback < 2 || displacementIdx < lookback {
+func confirmsCHOCH(candles []models.Candle, displacementIdx, lookback, strength int, bullish bool) (float64, bool) {
+	if strength < 1 || lookback < strength*2+1 || displacementIdx < lookback {
 		return 0, false
 	}
-	window := candles[displacementIdx-lookback : displacementIdx]
+	start := displacementIdx - lookback
+	end := displacementIdx // displacement itself cannot confirm its own pivot
 	if bullish {
-		level := window[0].High
-		for _, c := range window[1:] {
-			level = math.Max(level, c.High)
+		for i := end - strength - 1; i >= start+strength; i-- {
+			if confirmedM5Pivot(candles, i, strength, true) {
+				return candles[i].High, candles[displacementIdx].Close > candles[i].High
+			}
 		}
-		return level, candles[displacementIdx].Close > level
+		return 0, false
 	}
-	level := window[0].Low
-	for _, c := range window[1:] {
-		level = math.Min(level, c.Low)
+	for i := end - strength - 1; i >= start+strength; i-- {
+		if confirmedM5Pivot(candles, i, strength, false) {
+			return candles[i].Low, candles[displacementIdx].Close < candles[i].Low
+		}
 	}
-	return level, candles[displacementIdx].Close < level
+	return 0, false
+}
+
+func confirmedM5Pivot(candles []models.Candle, idx, strength int, high bool) bool {
+	if idx-strength < 0 || idx+strength >= len(candles) {
+		return false
+	}
+	value := candles[idx].Low
+	if high {
+		value = candles[idx].High
+	}
+	for offset := 1; offset <= strength; offset++ {
+		if high {
+			if value <= candles[idx-offset].High || value <= candles[idx+offset].High {
+				return false
+			}
+		} else if value >= candles[idx-offset].Low || value >= candles[idx+offset].Low {
+			return false
+		}
+	}
+	return true
 }
 
 // findOrderBlock returns the body of the last opposite-coloured M5 candle
 // before displacement. It is an entry zone, not an additional hard
 // confluence requirement: a fresh FVG or a fresh OB may trigger the setup.
-func findOrderBlock(candles []models.Candle, displacementIdx, lookback int, bullish bool) (float64, float64, bool) {
+func findOrderBlock(candles []models.Candle, displacementIdx, lookback int, bullish bool, notBefore time.Time) (float64, float64, bool) {
 	earliest := max(0, displacementIdx-lookback)
 	for i := displacementIdx - 1; i >= earliest; i-- {
 		c := candles[i]
+		if c.Ts.Before(notBefore) {
+			break
+		}
 		if bullish && c.Close < c.Open {
 			return math.Min(c.Open, c.Close), math.Max(c.Open, c.Close), true
 		}
@@ -702,15 +787,231 @@ func qualifiesHTFSweep(bar h1Bar, previousClose float64, candidate sweepCandidat
 		bar.High >= candidate.level+minimumSweep && bar.Close <= candidate.level-minimumReclaim
 }
 
-// detectH1Sweeps deliberately ignores ordinary internal H1 highs/lows. A
-// valid direction can only come from sweeping and reclaiming previous-day
-// liquidity or the extreme of prior fully closed H4 candles. This encodes the
-// user's intended reversal mapping: upper liquidity -> SELL, lower liquidity
-// -> BUY. A bar that sweeps both sides is ambiguous and produces no bias.
+type htfContext struct {
+	Valid       bool
+	Trend       string
+	Zone        string
+	RangeLow    float64
+	RangeHigh   float64
+	Equilibrium float64
+	ATR         float64
+}
+
+type barPivot struct {
+	Index int
+	Value float64
+}
+
+func averageBarATR(bars []h1Bar) float64 {
+	if len(bars) < 2 {
+		return 0
+	}
+	start := max(1, len(bars)-14)
+	var total float64
+	var count int
+	for i := start; i < len(bars); i++ {
+		tr := bars[i].High - bars[i].Low
+		tr = math.Max(tr, math.Abs(bars[i].High-bars[i-1].Close))
+		tr = math.Max(tr, math.Abs(bars[i].Low-bars[i-1].Close))
+		if tr <= 0 {
+			continue
+		}
+		total += tr
+		count++
+	}
+	if count == 0 {
+		return 0
+	}
+	return total / float64(count)
+}
+
+func confirmedBarPivots(bars []h1Bar, strength int, high bool) []barPivot {
+	if strength < 1 || len(bars) < strength*2+1 {
+		return nil
+	}
+	var out []barPivot
+	for i := strength; i+strength < len(bars); i++ {
+		value := bars[i].Low
+		if high {
+			value = bars[i].High
+		}
+		ok := true
+		for offset := 1; offset <= strength; offset++ {
+			if high {
+				if value <= bars[i-offset].High || value <= bars[i+offset].High {
+					ok = false
+					break
+				}
+			} else if value >= bars[i-offset].Low || value >= bars[i+offset].Low {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			out = append(out, barPivot{Index: i, Value: value})
+		}
+	}
+	return out
+}
+
+func classifyH4Trend(bars []h1Bar, strength int) string {
+	highs := confirmedBarPivots(bars, strength, true)
+	lows := confirmedBarPivots(bars, strength, false)
+	lastClose := bars[len(bars)-1].Close
+	if len(highs) > 0 && lastClose > highs[len(highs)-1].Value {
+		return "多頭結構"
+	}
+	if len(lows) > 0 && lastClose < lows[len(lows)-1].Value {
+		return "空頭結構"
+	}
+	if len(highs) >= 2 && len(lows) >= 2 {
+		higherHigh := highs[len(highs)-1].Value > highs[len(highs)-2].Value
+		higherLow := lows[len(lows)-1].Value > lows[len(lows)-2].Value
+		lowerHigh := highs[len(highs)-1].Value < highs[len(highs)-2].Value
+		lowerLow := lows[len(lows)-1].Value < lows[len(lows)-2].Value
+		if higherHigh && higherLow {
+			return "多頭結構"
+		}
+		if lowerHigh && lowerLow {
+			return "空頭結構"
+		}
+	}
+	return "盤整結構"
+}
+
+func zoneStillFresh(bars []h1Bar, formedAt int, low, high float64) bool {
+	for i := formedAt + 1; i < len(bars); i++ {
+		if bars[i].Low <= high && bars[i].High >= low {
+			return false
+		}
+	}
+	return true
+}
+
+func matchingFreshH4Zone(bars []h1Bar, sweep h1Bar, action models.SignalAction, atr float64) string {
+	for i := len(bars) - 1; i >= 2; i-- {
+		if action == models.SignalBuy && bars[i-2].High < bars[i].Low {
+			low, high := bars[i-2].High, bars[i].Low
+			if zoneStillFresh(bars, i, low, high) && sweep.Low <= high && sweep.High >= low {
+				return "H4多頭FVG"
+			}
+		}
+		if action == models.SignalSell && bars[i-2].Low > bars[i].High {
+			low, high := bars[i].High, bars[i-2].Low
+			if zoneStillFresh(bars, i, low, high) && sweep.Low <= high && sweep.High >= low {
+				return "H4空頭FVG"
+			}
+		}
+	}
+	for i := len(bars) - 1; i >= 1; i-- {
+		base, impulse := bars[i-1], bars[i]
+		impulseBody := math.Abs(impulse.Close - impulse.Open)
+		if impulseBody < atr*0.8 {
+			continue
+		}
+		low, high := math.Min(base.Open, base.Close), math.Max(base.Open, base.Close)
+		if !zoneStillFresh(bars, i, low, high) || sweep.Low > high || sweep.High < low {
+			continue
+		}
+		if action == models.SignalBuy && base.Close < base.Open && impulse.Close > impulse.Open && impulse.Close > base.High {
+			return "H4多頭OB"
+		}
+		if action == models.SignalSell && base.Close > base.Open && impulse.Close < impulse.Open && impulse.Close < base.Low {
+			return "H4空頭OB"
+		}
+	}
+	return ""
+}
+
+func buildHTFContext(closedH4 []h1Bar, sweep h1Bar, action models.SignalAction, params SBParams) htfContext {
+	lookback := max(params.HTFStructureLookback, params.SwingLookback)
+	if len(closedH4) < lookback {
+		return htfContext{}
+	}
+	window := closedH4[len(closedH4)-lookback:]
+	low, high := window[0].Low, window[0].High
+	for _, bar := range window[1:] {
+		low = math.Min(low, bar.Low)
+		high = math.Max(high, bar.High)
+	}
+	atr := averageBarATR(window)
+	if atr <= 0 || high <= low {
+		return htfContext{}
+	}
+	equilibrium := (low + high) / 2
+	trend := classifyH4Trend(window, params.HTFPivotStrength)
+	if action == models.SignalBuy && trend == "空頭結構" {
+		return htfContext{}
+	}
+	if action == models.SignalSell && trend == "多頭結構" {
+		return htfContext{}
+	}
+
+	zone := ""
+	edgeDistance := atr * params.HTFZoneATRMultiple
+	if action == models.SignalBuy {
+		if sweep.Low > equilibrium {
+			return htfContext{}
+		}
+		if sweep.Low <= low+edgeDistance {
+			zone = "H4折價SNR"
+		}
+	} else {
+		if sweep.High < equilibrium {
+			return htfContext{}
+		}
+		if sweep.High >= high-edgeDistance {
+			zone = "H4溢價SNR"
+		}
+	}
+	if zone == "" {
+		zone = matchingFreshH4Zone(window, sweep, action, atr)
+	}
+	if zone == "" {
+		return htfContext{}
+	}
+	return htfContext{
+		Valid: true, Trend: trend, Zone: zone,
+		RangeLow: low, RangeHigh: high, Equilibrium: equilibrium, ATR: atr,
+	}
+}
+
+func nearestH1StructureBarrier(bars []h1Bar, action models.SignalAction, current float64) (float64, string) {
+	if len(bars) < 5 {
+		return 0, ""
+	}
+	start := max(0, len(bars)-24)
+	window := bars[start:]
+	pivots := confirmedBarPivots(window, 2, action == models.SignalBuy)
+	var best float64
+	for _, pivot := range pivots {
+		level := pivot.Value
+		if action == models.SignalBuy {
+			if level <= current || (best > 0 && level >= best) {
+				continue
+			}
+		} else if level >= current || (best > 0 && level <= best) {
+			continue
+		}
+		best = level
+	}
+	if best == 0 {
+		return 0, ""
+	}
+	if action == models.SignalBuy {
+		return best, "H1確認擺動高點"
+	}
+	return best, "H1確認擺動低點"
+}
+
+// detectH1Sweeps accepts a reversal only when the external-liquidity raid is
+// also in valid H4 structure/location. Ordinary internal H1 highs/lows remain
+// ineligible as sweep sources. Every H4/H1 input is fully closed before the
+// sweep candle begins, so neither live use nor replay can see future context.
 func detectH1Sweeps(bars []h1Bar, params SBParams) []h1Sweep {
 	h4 := aggregateCompleteH4(bars)
 	days := completeUTCDayLevels(bars)
-	lookback := max(2, params.SwingLookback)
+	liquidityLookback := max(2, params.SwingLookback)
 	var out []h1Sweep
 	h4Closed := 0
 
@@ -728,12 +1029,13 @@ func detectH1Sweeps(bars []h1Bar, params SBParams) []h1Sweep {
 
 		var lower, upper []sweepCandidate
 		previousDay := bar.Start.UTC().Truncate(24 * time.Hour).Add(-24 * time.Hour)
-		if levels, ok := days[previousDay]; ok {
-			lower = append(lower, sweepCandidate{action: models.SignalBuy, level: levels.low, location: "PDL前日低點"})
-			upper = append(upper, sweepCandidate{action: models.SignalSell, level: levels.high, location: "PDH前日高點"})
+		previousDayLevels, hasPreviousDay := days[previousDay]
+		if hasPreviousDay {
+			lower = append(lower, sweepCandidate{action: models.SignalBuy, level: previousDayLevels.low, location: "PDL前日低點"})
+			upper = append(upper, sweepCandidate{action: models.SignalSell, level: previousDayLevels.high, location: "PDH前日高點"})
 		}
-		if h4Closed >= lookback {
-			window := h4[h4Closed-lookback : h4Closed]
+		if h4Closed >= liquidityLookback {
+			window := h4[h4Closed-liquidityLookback : h4Closed]
 			low, high := window[0].Low, window[0].High
 			for _, h4Bar := range window[1:] {
 				low = math.Min(low, h4Bar.Low)
@@ -744,21 +1046,21 @@ func detectH1Sweeps(bars []h1Bar, params SBParams) []h1Sweep {
 		}
 
 		var bull, bear *sweepCandidate
-		for j := range lower { // PDL is intentionally checked before H4 fallback.
+		for j := range lower {
 			if qualifiesHTFSweep(bar, bars[i-1].Close, lower[j], atr, params) {
 				candidate := lower[j]
 				bull = &candidate
 				break
 			}
 		}
-		for j := range upper { // PDH is intentionally checked before H4 fallback.
+		for j := range upper {
 			if qualifiesHTFSweep(bar, bars[i-1].Close, upper[j], atr, params) {
 				candidate := upper[j]
 				bear = &candidate
 				break
 			}
 		}
-		if (bull == nil) == (bear == nil) { // neither, or an outside bar sweeping both sides
+		if (bull == nil) == (bear == nil) {
 			continue
 		}
 
@@ -768,9 +1070,48 @@ func detectH1Sweeps(bars []h1Bar, params SBParams) []h1Sweep {
 		} else {
 			action, price, location = models.SignalSell, bar.High, bear.location
 		}
+		context := buildHTFContext(h4[:h4Closed], bar, action, params)
+		if !context.Valid {
+			continue
+		}
+
+		var barrier float64
+		var barrierName string
+		considerBarrier := func(level float64, name string) {
+			if action == models.SignalBuy {
+				if level > bar.Close && (barrier == 0 || level < barrier) {
+					barrier, barrierName = level, name
+				}
+				return
+			}
+			if level < bar.Close && (barrier == 0 || level > barrier) {
+				barrier, barrierName = level, name
+			}
+		}
+		if action == models.SignalBuy {
+			considerBarrier(context.RangeHigh, "H4區間高點")
+			if hasPreviousDay {
+				considerBarrier(previousDayLevels.high, "PDH前日高點")
+			}
+		} else {
+			considerBarrier(context.RangeLow, "H4區間低點")
+			if hasPreviousDay {
+				considerBarrier(previousDayLevels.low, "PDL前日低點")
+			}
+		}
+		if level, name := nearestH1StructureBarrier(bars[:i], action, bar.Close); level > 0 {
+			considerBarrier(level, name)
+		}
+		if barrier <= 0 {
+			continue
+		}
+
 		out = append(out, h1Sweep{
 			Action: action, Ts: bar.Start, Price: price,
 			Location: location, Confirmed: bar.End, H1Index: i,
+			HTFTrend: context.Trend, HTFContext: context.Zone,
+			RangeLow: context.RangeLow, RangeHigh: context.RangeHigh, Equilibrium: context.Equilibrium,
+			SweepATR: atr, TargetBarrier: barrier, TargetBarrierName: barrierName,
 		})
 	}
 	return out

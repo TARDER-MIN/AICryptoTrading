@@ -71,29 +71,35 @@ Other important settings are documented in `.env.example`, including
 
 The active deterministic strategy is fixed as follows:
 
-1. Only external higher-timeframe liquidity counts: the previous UTC-day
-   high/low (PDH/PDL), with the extreme of prior fully completed H4 candles as
-   a fallback. Ordinary internal H1 highs and lows cannot set direction.
-2. Direction follows the move after the liquidity raid, not the raid wick. A
-   closed H1 candle that sweeps above external highs and reclaims below creates
-   SELL bias; one that sweeps below external lows and reclaims above creates
-   BUY bias. A close outside is a breakout, not a reversal, and a candle that
-   raids both sides is ignored.
-3. The H1 raid must penetrate the level by at least 0.05 H1 ATR and reclaim
-   inside it by at least 0.10 H1 ATR. M5 must then close through recent
-   structure (CHOCH) with a displacement body of at least 60% of its range,
-   0.8 M5 ATR, and 1.2 times prior average M5 volume while leaving an FVG. The
-   last opposite M5 candle is tracked as an OB.
-4. Entry is allowed only on the first retest of a fresh FVG or OB and only
-   when that candle rejects the zone. A first touch without valid rejection
-   consumes the zone.
-5. The stop is beyond the triggering FVG/OB invalidation edge plus buffer.
-   The entire take-profit is fixed at exactly 1:1.5. The planned target must
-   also span at least five times the estimated round-trip fee and slippage;
-   smaller setups are skipped. There is no session gate.
+1. Completed H4 candles establish the dealing range, premium/discount,
+   confirmed-pivot market structure, and eligible SNR/fresh FVG/OB context.
+   Confirmed bullish H4 structure forbids shorts; confirmed bearish H4
+   structure forbids longs. Ranging structure may trade either edge, but only
+   from a qualified H4 location.
+2. Only external liquidity counts: the previous UTC-day high/low (PDH/PDL),
+   with the extreme of prior fully completed H4 candles as fallback. A fully
+   closed H1 candle must raid and reclaim that level inside the correct H4
+   location. Upper raid/reclaim creates SELL bias; lower creates BUY bias.
+   A close outside is a breakout, not a reversal; a two-sided raid is ignored.
+3. The H1 raid must penetrate at least 0.05 H1 ATR and reclaim by at least
+   0.10 H1 ATR. M5 must then close through a confirmed pivot (not merely the
+   highest/lowest bar in a short window) using a displacement body of at least
+   60% of range, 0.8 M5 ATR and 1.2 times prior average volume.
+4. The same displacement leg must leave the FVG and define the last opposite
+   candle used as the OB. Entry is allowed only on the first rejecting retest;
+   any earlier touch consumes the zone.
+5. The stop sits beyond the selected FVG/OB invalidation edge plus buffer. The
+   entire target remains exactly 1:1.5 and must span at least five times
+   estimated round-trip costs. It is also rejected if it would cross the
+   nearest still-unbroken opposing H4/H1 pivot or range boundary.
+6. Detection remains 24/7. Time is not an entry gate; final-test reports split
+   trades into four six-hour UTC entry blocks so any genuine session effect is
+   visible before a future rule change is considered.
 
-All H1 bars are built from already-closed M5 candles. A partial H1 candle can
-never create direction in live evaluation or historical replay.
+H1 and H4 bars are constructed only from completed M5 buckets. H4 context,
+H1 direction, confirmed M5 pivots and every retest therefore use information
+that was available at that historical close, without higher-timeframe
+lookahead.
 
 ### Same-date BingX comparison
 

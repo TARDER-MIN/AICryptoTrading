@@ -40,6 +40,21 @@ func backfillHTF3Plus1Defaults(p *SBParams) {
 	if p.StopBufferPct < 0 {
 		p.StopBufferPct = d.StopBufferPct
 	}
+	if p.HTFStructureLookback < 4 {
+		p.HTFStructureLookback = d.HTFStructureLookback
+	}
+	if p.HTFPivotStrength < 1 {
+		p.HTFPivotStrength = d.HTFPivotStrength
+	}
+	if p.HTFZoneATRMultiple <= 0 {
+		p.HTFZoneATRMultiple = d.HTFZoneATRMultiple
+	}
+	if p.CHOCHPivotStrength < 1 {
+		p.CHOCHPivotStrength = d.CHOCHPivotStrength
+	}
+	if p.TargetBarrierBufferATR <= 0 {
+		p.TargetBarrierBufferATR = d.TargetBarrierBufferATR
+	}
 	if p.MinDisplacementBodyPct <= 0 {
 		p.MinDisplacementBodyPct = d.MinDisplacementBodyPct
 	}

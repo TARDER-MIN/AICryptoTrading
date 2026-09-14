@@ -50,11 +50,12 @@ type SignalResult struct {
 	RawJSON    []byte              `json:"-"`
 }
 
-// GenerateSignal asks Claude to confirm or reject an HTF 3+1 setup. The rule
-// engine has already found a fully-closed H1 external-liquidity sweep/reclaim,
-// M5 CHOCH with ATR/volume-confirmed displacement, a fresh FVG or order block,
-// its first-retest rejection, and a target large enough relative to execution
-// costs. There is no time-of-day session gate. This call is the second,
+// GenerateSignal asks Claude to confirm or reject a location-first HTF 3+1
+// setup. The rule engine has already validated completed-H4 structure and
+// premium/discount context, a closed-H1 external-liquidity sweep/reclaim,
+// confirmed-pivot M5 CHOCH with ATR/volume displacement, the same leg's fresh
+// FVG/order block, its first-retest rejection, and an unobstructed 1:1.5
+// target path. There is no time-of-day session gate. This call is the second,
 // human-judgment-shaped
 // opinion the rule doesn't have: given that every mechanical filter already
 // passed, does the setup actually look tradeable - is the sweep a genuine
@@ -83,11 +84,11 @@ func (c *Client) GenerateSignal(ctx context.Context, req SignalRequest) (*Signal
 				"action": map[string]any{
 					"type":        "string",
 					"enum":        []string{"BUY", "SELL", "HOLD"},
-					"description": "確認規則偵測到的方向進場，或判斷這組HTF 3+1設定不夠可信而選擇HOLD。規則引擎已驗證：已收線H1掃PDH/PDL或H4外部流動性並收回；掃上方只允許SELL、掃下方只允許BUY；M5 CHOCH與ATR/量能位移、Fresh FVG或OB第一次回踩拒絕及成本距離門檻皆已通過。只能跟規則方向一致或HOLD，禁止反向。",
+					"description": "確認規則偵測到的方向進場，或判斷這組HTF 3+1設定不夠可信而選擇HOLD。規則引擎已驗證：H4結構與溢折價SNR/FVG/OB位置、已收線H1外部流動性掃掠收回（上掃SELL、下掃BUY）、M5確認擺動CHOCH與ATR/量能位移、同位移Fresh FVG/OB首次回踩拒絕，以及1:1.5目標前無H4/H1結構阻礙。只能跟規則方向一致或HOLD，禁止反向。",
 				},
 				"confidence": map[string]any{
 					"type":        "number",
-					"description": "0到1的信心。評估H1外部流動性掃掠與收回是否明確、M5 CHOCH突破幅度、位移K實體/ATR/量能品質、FVG/OB是否乾淨、第一次回踩拒絕是否有力、近期結構與資金費率是否配合。多項只壓線通過時信心應低。",
+					"description": "0到1的信心。評估H4位置與結構是否乾淨、H1外部流動性掃掠收回是否明確、M5確認擺動CHOCH突破幅度、位移K實體/ATR/量能、同位移FVG/OB與首次回踩拒絕品質，以及目標路徑與資金費率。多項只壓線時信心應低。",
 				},
 				"entry_hint": map[string]any{
 					"type":        "number",
@@ -103,7 +104,7 @@ func (c *Client) GenerateSignal(ctx context.Context, req SignalRequest) (*Signal
 				},
 				"rationale": map[string]any{
 					"type":        "string",
-					"description": "繁體中文3-6句：(1)H1掃掠收回品質 (2)M5 CHOCH與位移品質 (3)Fresh FVG/OB第一次回踩拒絕品質 (4)近期結構與資金費率 (5)固定進場、失效停損與1:1.5停利 (6)至少一項反方風險。",
+					"description": "繁體中文3-6句：(1)H4結構、溢折價與區域品質 (2)H1掃掠收回品質 (3)M5確認擺動CHOCH與同位移FVG/OB首次回踩品質 (4)目標路徑與資金費率 (5)固定進場、失效停損與1:1.5停利 (6)至少一項反方風險。",
 				},
 			},
 			Required: []string{"action", "confidence", "entry_hint", "stop_loss", "take_profit", "rationale"},

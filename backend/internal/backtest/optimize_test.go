@@ -123,8 +123,8 @@ func TestFinalTestDiagnosticsBreaksDownAndSeparatesEndOfData(t *testing.T) {
 	if len(got.BySymbol) != 2 || got.BySymbol[0].Label != "ETH-USDT" || got.BySymbol[0].Metrics.EndDataExits != 1 {
 		t.Fatalf("symbol diagnostics = %#v, want ETH loss/end-of-data first", got.BySymbol)
 	}
-	if len(got.BySide) != 2 || len(got.ByDay) != 2 {
-		t.Fatalf("diagnostic group sizes side/day = %d/%d, want 2/2", len(got.BySide), len(got.ByDay))
+	if len(got.BySide) != 2 || len(got.ByDay) != 2 || len(got.BySession) != 1 {
+		t.Fatalf("diagnostic group sizes side/day/session = %d/%d/%d, want 2/2/1", len(got.BySide), len(got.ByDay), len(got.BySession))
 	}
 }
 
@@ -240,5 +240,29 @@ func TestTimeRangeUsesTradableUniverseNotAnchorOnlySeries(t *testing.T) {
 	minTs, maxTs := timeRange(candles, []string{"ALT-USDT"})
 	if !minTs.Equal(base.Add(24*time.Hour)) || !maxTs.Equal(base.Add(48*time.Hour)) {
 		t.Fatalf("timeRange = %s..%s, want tradable ALT range", minTs, maxTs)
+	}
+}
+
+
+func TestFinalDiagnosticsSplitEveryUTCEntryBlockWithoutGating(t *testing.T) {
+	base := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+	hours := []int{1, 7, 13, 19}
+	var trades []Trade
+	for _, hour := range hours {
+		entry := base.Add(time.Duration(hour) * time.Hour)
+		trades = append(trades, Trade{
+			Symbol: "BTC-USDT", Side: models.SignalBuy,
+			EntryTs: entry, ExitTs: entry.Add(time.Minute),
+			ExitReason: "target", GrossPnLPct: 1, PnLPct: 1,
+		})
+	}
+	got := buildFinalTestDiagnostics(trades, CostModel{})
+	if len(got.BySession) != 4 {
+		t.Fatalf("UTC entry blocks = %d, want all four diagnostic blocks", len(got.BySession))
+	}
+	for i, block := range got.BySession {
+		if block.Metrics.TotalTrades != 1 || block.Metrics.TotalReturnPct != 1 {
+			t.Fatalf("block %d = %#v, want one diagnostic trade", i, block)
+		}
 	}
 }

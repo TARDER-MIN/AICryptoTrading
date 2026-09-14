@@ -17,6 +17,12 @@ func htfTestParams() SBParams {
 		StopBufferPct:   0.1,
 		RiskRewardRatio: 1.5,
 
+		HTFStructureLookback:   4,
+		HTFPivotStrength:       2,
+		HTFZoneATRMultiple:     0.75,
+		CHOCHPivotStrength:     2,
+		TargetBarrierBufferATR: 0.10,
+
 		MinHTFSweepATR:            0.05,
 		MinHTFReclaimATR:          0.10,
 		MinDisplacementBodyPct:    0.6,
@@ -59,12 +65,13 @@ func bullishFixtureAtUTCOffset(start time.Time, sweepHour int) []models.Candle {
 	c[sweepOffset*12+4].Low = 98.5 // PDL=99.5; H1 closes back at 100
 	executionOffset := time.Duration(sweepOffset+1) * time.Hour
 	c = append(c,
-		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(executionOffset + 0*time.Minute), Open: 100, High: 100.5, Low: 99.5, Close: 100, Volume: 10},
-		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(executionOffset + 5*time.Minute), Open: 100, High: 100.5, Low: 99.7, Close: 100, Volume: 10},
-		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(executionOffset + 10*time.Minute), Open: 100, High: 100.5, Low: 99.8, Close: 100.1, Volume: 10},
+		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(executionOffset + 0*time.Minute), Open: 100, High: 100.4, Low: 99.5, Close: 100, Volume: 10},
+		// Confirmed pivot high: two lower highs exist on both sides before displacement.
+		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(executionOffset + 5*time.Minute), Open: 100, High: 101.0, Low: 99.7, Close: 100, Volume: 10},
+		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(executionOffset + 10*time.Minute), Open: 100, High: 100.4, Low: 99.8, Close: 100.1, Volume: 10},
 		// Last bearish M5 candle before displacement: OB body [100.0, 100.2].
 		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(executionOffset + 15*time.Minute), Open: 100.2, High: 100.3, Low: 99.9, Close: 100.0, Volume: 10},
-		// Bullish displacement closes above the previous three M5 highs (CHOCH).
+		// Bullish displacement closes above the confirmed M5 pivot (CHOCH).
 		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(executionOffset + 20*time.Minute), Open: 100.1, High: 101.8, Low: 100.0, Close: 101.6, Volume: 30},
 		// Bullish FVG [100.3, 100.8].
 		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(executionOffset + 25*time.Minute), Open: 101.1, High: 101.5, Low: 100.8, Close: 101.2, Volume: 20},
@@ -82,11 +89,12 @@ func bearishFixture(start time.Time) []models.Candle {
 	executionOffset := time.Duration(sweepOffset+1) * time.Hour
 	c = append(c,
 		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(executionOffset + 0*time.Minute), Open: 100, High: 100.5, Low: 99.5, Close: 100, Volume: 10},
-		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(executionOffset + 5*time.Minute), Open: 100, High: 100.4, Low: 99.5, Close: 100, Volume: 10},
+		// Confirmed pivot low: two higher lows exist on both sides before displacement.
+		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(executionOffset + 5*time.Minute), Open: 100, High: 100.4, Low: 99.0, Close: 100, Volume: 10},
 		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(executionOffset + 10*time.Minute), Open: 100, High: 100.3, Low: 99.5, Close: 99.9, Volume: 10},
 		// Last bullish M5 candle before displacement: OB body [99.8, 100.0].
 		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(executionOffset + 15*time.Minute), Open: 99.8, High: 100.1, Low: 99.7, Close: 100.0, Volume: 10},
-		// Bearish displacement closes below the previous three M5 lows (CHOCH).
+		// Bearish displacement closes below the confirmed M5 pivot (CHOCH).
 		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(executionOffset + 20*time.Minute), Open: 99.9, High: 100.0, Low: 98.2, Close: 98.4, Volume: 30},
 		// Bearish FVG [99.2, 99.7].
 		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(executionOffset + 25*time.Minute), Open: 98.8, High: 99.2, Low: 98.5, Close: 98.8, Volume: 20},
@@ -108,8 +116,8 @@ func TestHTF3Plus1BullishSetup(t *testing.T) {
 	if sig.EntryZoneType != "FVG" || sig.FVGLow != 100.3 || sig.FVGHigh != 100.8 {
 		t.Fatalf("zone = %s [%.4f, %.4f], want FVG [100.3, 100.8]", sig.EntryZoneType, sig.FVGLow, sig.FVGHigh)
 	}
-	if sig.CHOCHLevel != 100.5 || sig.SweepPrice != 98.5 {
-		t.Errorf("CHOCH/sweep = %.4f/%.4f, want 100.5/98.5", sig.CHOCHLevel, sig.SweepPrice)
+	if sig.CHOCHLevel != 101.0 || sig.SweepPrice != 98.5 {
+		t.Errorf("CHOCH/sweep = %.4f/%.4f, want 101.0/98.5", sig.CHOCHLevel, sig.SweepPrice)
 	}
 	if !(sig.StopLoss < sig.Entry && sig.Entry < sig.TakeProfit) {
 		t.Fatalf("invalid BUY prices stop %.5f entry %.5f target %.5f", sig.StopLoss, sig.Entry, sig.TakeProfit)
@@ -354,5 +362,85 @@ func TestHTF3Plus1NoSessionGate(t *testing.T) {
 		if sig.Action != models.SignalBuy {
 			t.Errorf("sweep hour %d UTC: expected BUY without session gating, got %s (%s)", hour, sig.Action, sig.Reason)
 		}
+	}
+}
+
+
+func TestHTFContextRejectsShortAgainstBullishH4Structure(t *testing.T) {
+	start := htfBase
+	values := []struct {
+		high, low, close float64
+	}{
+		{100, 96, 98}, {102, 97, 100}, {105, 98, 103},
+		{103, 99, 101}, {104, 100, 102}, {106, 101, 104}, {107, 102, 106},
+	}
+	bars := make([]h1Bar, 0, len(values))
+	for i, value := range values {
+		barStart := start.Add(time.Duration(i) * 4 * time.Hour)
+		bars = append(bars, h1Bar{
+			Start: barStart, End: barStart.Add(4 * time.Hour),
+			Open: value.close - 0.5, High: value.high, Low: value.low, Close: value.close,
+		})
+	}
+	params := htfTestParams()
+	params.HTFStructureLookback = len(bars)
+	sweep := h1Bar{Low: 105, High: 108, Open: 106, Close: 106.5}
+	context := buildHTFContext(bars, sweep, models.SignalSell, params)
+	if context.Valid {
+		t.Fatalf("bullish H4 structure incorrectly allowed a SELL context: %#v", context)
+	}
+	if got := classifyH4Trend(bars, 2); got != "多頭結構" {
+		t.Fatalf("H4 trend = %q, want bullish structure", got)
+	}
+}
+
+func TestHTFContextRejectsMidRangeSweepWithoutZone(t *testing.T) {
+	var bars []h1Bar
+	for i := 0; i < 12; i++ {
+		price := 100.0 + float64(i)
+		start := htfBase.Add(time.Duration(i) * 4 * time.Hour)
+		bars = append(bars, h1Bar{
+			Start: start, End: start.Add(4 * time.Hour),
+			Open: price, High: price + 1, Low: price - 1, Close: price,
+		})
+	}
+	params := htfTestParams()
+	params.HTFStructureLookback = 12
+	sweep := h1Bar{Open: 106, High: 106.5, Low: 105, Close: 105.5}
+	if context := buildHTFContext(bars, sweep, models.SignalBuy, params); context.Valid {
+		t.Fatalf("mid-range sweep without fresh H4 zone was accepted: %#v", context)
+	}
+}
+
+func TestM5CHOCHRequiresConfirmedPivot(t *testing.T) {
+	var candles []models.Candle
+	highs := []float64{100, 102, 105, 103, 104, 106}
+	for i, high := range highs {
+		candles = append(candles, models.Candle{
+			Ts: htfBase.Add(time.Duration(i) * 5 * time.Minute),
+			Open: high - 1, High: high, Low: high - 2, Close: high - 0.5, Volume: 10,
+		})
+	}
+	candles[5].Close = 104.5
+	if level, ok := confirmsCHOCH(candles, 5, 5, 2, true); ok || level != 105 {
+		t.Fatalf("close below confirmed pivot returned level %.2f ok=%v, want 105/false", level, ok)
+	}
+	candles[5].Close = 105.5
+	if level, ok := confirmsCHOCH(candles, 5, 5, 2, true); !ok || level != 105 {
+		t.Fatalf("close above confirmed pivot returned level %.2f ok=%v, want 105/true", level, ok)
+	}
+}
+
+func TestTargetPathMustClearOpposingStructure(t *testing.T) {
+	params := htfTestParams()
+	bias := HTFBias{
+		Action: models.SignalBuy, SweepATR: 2,
+		TargetBarrier: 105, TargetBarrierName: "H1確認擺動高點",
+	}
+	if targetPathClear(100, 104.9, bias, params) {
+		t.Fatal("target crossing the required structure buffer was accepted")
+	}
+	if !targetPathClear(100, 104.5, bias, params) {
+		t.Fatal("target with clean room before opposing structure was rejected")
 	}
 }

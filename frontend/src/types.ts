@@ -152,6 +152,12 @@ export interface SBParams {
   max_bars_for_sweep: number;
   stop_buffer_pct: number;
   risk_reward_ratio: number;
+  // Fixed HTF location/structure thresholds (not grid-searched).
+  htf_structure_lookback: number;
+  htf_pivot_strength: number;
+  htf_zone_atr_multiple: number;
+  choch_pivot_strength: number;
+  target_barrier_buffer_atr: number;
   // Fixed HTF/M5 quality thresholds (not grid-searched by optimize).
   min_htf_sweep_atr: number;
   min_htf_reclaim_atr: number;
@@ -218,6 +224,7 @@ export interface FinalTestDiagnostics {
   by_symbol: BacktestBreakdown[];
   by_side: BacktestBreakdown[];
   by_day: BacktestBreakdown[];
+  by_session: BacktestBreakdown[];
 }
 
 export interface WalkForwardFold {

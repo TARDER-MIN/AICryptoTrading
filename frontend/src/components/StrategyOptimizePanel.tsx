@@ -3,7 +3,7 @@ import { api } from "../api/client";
 import { useI18n } from "../i18n/I18nContext";
 import type { BacktestBreakdown, BacktestMetrics, OptimizeReport, SBParams } from "../types";
 
-const CURRENT_STRATEGY_VERSION = "htf_external_liquidity_v2";
+const CURRENT_STRATEGY_VERSION = "htf_location_3plus1_v3";
 
 function MetricsRow({ label, m }: { label: string; m: BacktestMetrics | null | undefined }) {
   const { t } = useI18n();
@@ -118,12 +118,18 @@ export function StrategyOptimizePanel() {
 
   const fixedRulesSummary = (p: SBParams) =>
     t("strategyOptimize.fixedRulesSummary", {
+      // Old reports remain readable after a strategy-version migration.
+      htfLookback: p.htf_structure_lookback ?? 12,
+      htfPivot: p.htf_pivot_strength ?? 2,
+      htfZoneAtr: (p.htf_zone_atr_multiple ?? 0.75).toFixed(2),
       htfSweepAtr: p.min_htf_sweep_atr.toFixed(2),
       htfReclaimAtr: p.min_htf_reclaim_atr.toFixed(2),
       dispPct: (p.min_displacement_body_pct * 100).toFixed(0),
       dispAtr: p.min_displacement_atr.toFixed(1),
       dispVolume: p.min_displacement_volume.toFixed(1),
       choch: p.choch_lookback,
+      chochPivot: p.choch_pivot_strength ?? 2,
+      barrierBuffer: (p.target_barrier_buffer_atr ?? 0.10).toFixed(2),
       retest: p.max_bars_for_retest,
       ob: p.order_block_lookback,
       costMultiple: p.min_target_cost_multiple.toFixed(0),
@@ -431,6 +437,13 @@ export function StrategyOptimizePanel() {
                   labelHeader={t("strategyOptimize.colSymbol")}
                 />
               </details>
+              <details open>
+                <summary>{t("strategyOptimize.bySessionTitle")}</summary>
+                <BreakdownTable
+                  rows={report.final_test_diagnostics.by_session ?? []}
+                  labelHeader={t("strategyOptimize.colHourBlockUTC")}
+                />
+              </details>
               <details>
                 <summary>{t("strategyOptimize.byDayTitle")}</summary>
                 <BreakdownTable
@@ -618,6 +631,13 @@ export function StrategyOptimizePanel() {
                 <BreakdownTable
                   rows={longReport.final_test_diagnostics.by_symbol}
                   labelHeader={t("strategyOptimize.colSymbol")}
+                />
+              </details>
+              <details open>
+                <summary>{t("strategyOptimize.bySessionTitle")}</summary>
+                <BreakdownTable
+                  rows={longReport.final_test_diagnostics.by_session ?? []}
+                  labelHeader={t("strategyOptimize.colHourBlockUTC")}
                 />
               </details>
             </>

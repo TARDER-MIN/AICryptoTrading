@@ -36,6 +36,7 @@ type FinalTestDiagnostics struct {
 	BySymbol      []Breakdown `json:"by_symbol"`
 	BySide        []Breakdown `json:"by_side"`
 	ByDay         []Breakdown `json:"by_day"`
+	BySession     []Breakdown `json:"by_session"`
 }
 
 // WalkForwardFold selects a parameter set using only data strictly before
@@ -442,6 +443,7 @@ func buildFinalTestDiagnostics(trades []Trade, costs CostModel) FinalTestDiagnos
 	bySymbol := make(map[string][]Trade)
 	bySide := make(map[string][]Trade)
 	byDay := make(map[string][]Trade)
+	bySession := make(map[string][]Trade)
 	for _, trade := range trades {
 		if trade.ExitReason != "end_of_data" {
 			completed = append(completed, trade)
@@ -449,6 +451,8 @@ func buildFinalTestDiagnostics(trades []Trade, costs CostModel) FinalTestDiagnos
 		bySymbol[trade.Symbol] = append(bySymbol[trade.Symbol], trade)
 		bySide[string(trade.Side)] = append(bySide[string(trade.Side)], trade)
 		byDay[trade.EntryTs.UTC().Format("2006-01-02")] = append(byDay[trade.EntryTs.UTC().Format("2006-01-02")], trade)
+		block := utcEntryBlock(trade.EntryTs)
+		bySession[block] = append(bySession[block], trade)
 	}
 
 	diagnostics := FinalTestDiagnostics{
@@ -456,6 +460,7 @@ func buildFinalTestDiagnostics(trades []Trade, costs CostModel) FinalTestDiagnos
 		BySymbol:      groupedBreakdowns(bySymbol, costs),
 		BySide:        groupedBreakdowns(bySide, costs),
 		ByDay:         groupedBreakdowns(byDay, costs),
+		BySession:     groupedBreakdowns(bySession, costs),
 	}
 	// Symbols are intentionally worst-to-best so the largest sources of
 	// final-test loss are visible without manual sorting in the dashboard.
@@ -468,7 +473,24 @@ func buildFinalTestDiagnostics(trades []Trade, costs CostModel) FinalTestDiagnos
 	sort.SliceStable(diagnostics.ByDay, func(i, j int) bool {
 		return diagnostics.ByDay[i].Label < diagnostics.ByDay[j].Label
 	})
+	sort.SliceStable(diagnostics.BySession, func(i, j int) bool {
+		return diagnostics.BySession[i].Label < diagnostics.BySession[j].Label
+	})
 	return diagnostics
+}
+
+func utcEntryBlock(ts time.Time) string {
+	hour := ts.UTC().Hour()
+	switch {
+	case hour < 6:
+		return "00:00-05:59 UTC"
+	case hour < 12:
+		return "06:00-11:59 UTC"
+	case hour < 18:
+		return "12:00-17:59 UTC"
+	default:
+		return "18:00-23:59 UTC"
+	}
 }
 
 func groupedBreakdowns(groups map[string][]Trade, costs CostModel) []Breakdown {
