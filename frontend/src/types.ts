@@ -141,9 +141,10 @@ export interface WSMessage<T = unknown> {
 // --- HTF 3+1 strategy / backtest optimization ---
 // No time-of-day session gating (e.g. ICT's classic NY 10-11am/2-3pm
 // windows) - by explicit user choice, since BingX perpetuals trade 24/7.
-// A setup is evaluated whenever it occurs: fully closed H1 liquidity sweep
-// and reclaim -> M5 CHOCH/displacement -> fresh FVG or order-block first
-// retest with rejection.
+// A setup is evaluated whenever it occurs: a fully closed H1 candle sweeps
+// and reclaims PDH/PDL or a completed-H4 external extreme -> M5 CHOCH and
+// ATR/volume displacement -> fresh FVG or order-block first retest with
+// rejection. An upper sweep maps to SELL; a lower sweep maps to BUY.
 
 export interface SBParams {
   swing_lookback: number;
@@ -151,13 +152,21 @@ export interface SBParams {
   max_bars_for_sweep: number;
   stop_buffer_pct: number;
   risk_reward_ratio: number;
-  // Fixed M5 structural thresholds (not grid-searched by optimize).
+  // Fixed HTF/M5 quality thresholds (not grid-searched by optimize).
+  min_htf_sweep_atr: number;
+  min_htf_reclaim_atr: number;
   min_displacement_body_pct: number;
   max_opposing_wick_pct: number;
+  min_displacement_atr: number;
+  min_displacement_volume: number;
+  displacement_atr_lookback: number;
+  displacement_vol_lookback: number;
   choch_lookback: number;
   max_bars_for_retest: number;
   order_block_lookback: number;
   require_rejection: boolean;
+  estimated_round_trip_cost_pct: number;
+  min_target_cost_multiple: number;
 }
 
 export interface BacktestMetrics {
@@ -252,6 +261,7 @@ export interface RobustSelectionReport {
 }
 
 export interface OptimizeReport {
+  strategy_version?: string;
   best_params: SBParams;
   train_metrics: BacktestMetrics;
   validation_metrics: BacktestMetrics;

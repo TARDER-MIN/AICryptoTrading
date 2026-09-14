@@ -90,6 +90,7 @@ type RobustSelectionReport struct {
 }
 
 type OptimizeReport struct {
+	StrategyVersion      string                `json:"strategy_version,omitempty"`
 	Best                 strategy.SBParams     `json:"best_params"`
 	Train                Result                `json:"train_metrics"`
 	Validation           Result                `json:"validation_metrics"`
@@ -153,7 +154,8 @@ func Optimize(candlesBySymbol map[string][]models.Candle, fundingBySymbol map[st
 	minTs, maxTs := timeRange(candlesBySymbol, tradableSymbols)
 	if minTs.IsZero() || maxTs.IsZero() || !maxTs.After(minTs) {
 		return OptimizeReport{
-			Best: strategy.DefaultSBParams(), CostModel: costs.normalized(),
+			StrategyVersion: strategy.StrategyVersion,
+			Best:            strategy.DefaultSBParams(), CostModel: costs.normalized(),
 			ApplyBlockers: []string{"insufficient_history"},
 		}
 	}
@@ -165,7 +167,7 @@ func Optimize(candlesBySymbol map[string][]models.Candle, fundingBySymbol map[st
 	costs = costs.normalized()
 
 	var candidates []Candidate
-	for _, p := range paramGrid() {
+	for _, p := range paramGrid(costs) {
 		var allTrades []Trade
 		for _, symbol := range tradableSymbols {
 			candles, ok := candlesBySymbol[symbol]
@@ -187,7 +189,8 @@ func Optimize(candlesBySymbol map[string][]models.Candle, fundingBySymbol map[st
 	}
 
 	report := OptimizeReport{
-		CostModel: costs, TrainEnd: trainEnd, TestStart: testStart,
+		StrategyVersion: strategy.StrategyVersion,
+		CostModel:       costs, TrainEnd: trainEnd, TestStart: testStart,
 		CandidatesEvaluated: len(candidates),
 	}
 
@@ -583,11 +586,12 @@ func timeRange(candlesBySymbol map[string][]models.Candle, symbols []string) (mi
 // well-established structural thresholds, not free parameters to curve-fit,
 // and adding them to the grid would multiply the search space for no
 // overfitting-safety benefit.
-func paramGrid() []strategy.SBParams {
+func paramGrid(costs CostModel) []strategy.SBParams {
 	base := strategy.DefaultSBParams()
+	base.EstimatedRoundTripCostPct = 2 * (costs.TakerFeePctPerSide + costs.EstimatedSlippagePctPerSide)
 	var grid []strategy.SBParams
-	for _, swing := range []int{8, 12, 20} {
-		for _, fvgPct := range []float64{0.02, 0.05, 0.1} {
+	for _, swing := range []int{4, 6, 12} {
+		for _, fvgPct := range []float64{0.05, 0.1, 0.15} {
 			for _, sweepBars := range []int{2, 4, 6} {
 				for _, stopBuf := range []float64{0.05, 0.1} {
 					// Keep the strategy's risk/reward fixed at 1:1.5.

@@ -3,6 +3,8 @@ import { api } from "../api/client";
 import { useI18n } from "../i18n/I18nContext";
 import type { BacktestBreakdown, BacktestMetrics, OptimizeReport, SBParams } from "../types";
 
+const CURRENT_STRATEGY_VERSION = "htf_external_liquidity_v2";
+
 function MetricsRow({ label, m }: { label: string; m: BacktestMetrics | null | undefined }) {
   const { t } = useI18n();
   if (!m) return null;
@@ -116,10 +118,15 @@ export function StrategyOptimizePanel() {
 
   const fixedRulesSummary = (p: SBParams) =>
     t("strategyOptimize.fixedRulesSummary", {
+      htfSweepAtr: p.min_htf_sweep_atr.toFixed(2),
+      htfReclaimAtr: p.min_htf_reclaim_atr.toFixed(2),
       dispPct: (p.min_displacement_body_pct * 100).toFixed(0),
+      dispAtr: p.min_displacement_atr.toFixed(1),
+      dispVolume: p.min_displacement_volume.toFixed(1),
       choch: p.choch_lookback,
       retest: p.max_bars_for_retest,
       ob: p.order_block_lookback,
+      costMultiple: p.min_target_cost_multiple.toFixed(0),
       rejection: p.require_rejection ? t("strategyOptimize.required") : t("strategyOptimize.notRequired"),
     });
 
@@ -202,6 +209,8 @@ export function StrategyOptimizePanel() {
   };
   const robustSelection = report?.robust_selection;
   const applyBlockers = report?.apply_blockers ?? [];
+  const reportIsCurrent = report?.strategy_version === CURRENT_STRATEGY_VERSION;
+  const longReportIsCurrent = longReport?.strategy_version === CURRENT_STRATEGY_VERSION;
 
   return (
     <div className="panel">
@@ -262,7 +271,13 @@ export function StrategyOptimizePanel() {
 
       {report && (
         <div style={{ marginTop: 12 }}>
-          {typeof report.params_applied === "boolean" && (
+          {!reportIsCurrent && (
+            <div className="optimization-decision blocked">
+              <h4>{t("strategyOptimize.outdatedReportTitle")}</h4>
+              <p className="small">{t("strategyOptimize.outdatedReportHelp")}</p>
+            </div>
+          )}
+          {reportIsCurrent && typeof report.params_applied === "boolean" && (
           <div className={`optimization-decision ${report.params_applied ? "passed" : "blocked"}`}>
             <h4>
               {report.params_applied
@@ -497,7 +512,13 @@ export function StrategyOptimizePanel() {
       {longReport && (
         <div className="backtest-diagnostics long-range-report" style={{ marginTop: 16 }}>
           <h4>{t("strategyOptimize.longTitle")}</h4>
-          <div className={`optimization-decision ${longReport.robustness_passed ? "passed" : "blocked"}`}>
+          {!longReportIsCurrent && (
+            <div className="optimization-decision blocked">
+              <h4>{t("strategyOptimize.outdatedLongReportTitle")}</h4>
+              <p className="small">{t("strategyOptimize.outdatedLongReportHelp")}</p>
+            </div>
+          )}
+          {longReportIsCurrent && <div className={`optimization-decision ${longReport.robustness_passed ? "passed" : "blocked"}`}>
             <h4>
               {longReport.robustness_passed
                 ? t("strategyOptimize.longPassedTitle")
@@ -513,7 +534,7 @@ export function StrategyOptimizePanel() {
                 {longReport.apply_blockers?.map((code) => <li key={code}>{blockerText(code)}</li>)}
               </ul>
             )}
-          </div>
+          </div>}
 
           <p className="muted small">
             {t("strategyOptimize.longSampleSummary", {

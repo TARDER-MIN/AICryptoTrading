@@ -17,12 +17,20 @@ func htfTestParams() SBParams {
 		StopBufferPct:   0.1,
 		RiskRewardRatio: 1.5,
 
-		MinDisplacementBodyPct: 0.6,
-		MaxOpposingWickPct:     0.25,
-		CHOCHLookback:          3,
-		MaxBarsForRetest:       6,
-		OrderBlockLookback:     5,
-		RequireRejection:       true,
+		MinHTFSweepATR:            0.05,
+		MinHTFReclaimATR:          0.10,
+		MinDisplacementBodyPct:    0.6,
+		MaxOpposingWickPct:        0.25,
+		MinDisplacementATR:        0.8,
+		MinDisplacementVolume:     1.2,
+		DisplacementATRLookback:   14,
+		DisplacementVolLookback:   20,
+		CHOCHLookback:             5,
+		MaxBarsForRetest:          6,
+		OrderBlockLookback:        5,
+		RequireRejection:          true,
+		EstimatedRoundTripCostPct: 0.14,
+		MinTargetCostMultiple:     5,
 	}
 }
 
@@ -37,45 +45,54 @@ func flatM5(start time.Time, hours int) []models.Candle {
 	return result
 }
 
-// bullishFixture creates four prior H1 ranges, a fifth fully-closed H1 bar
-// that sweeps the prior low and reclaims it, then a M5 CHOCH/displacement/FVG
-// and a first-retest rejection inside the still-open next H1 bucket.
+// bullishFixture creates one fully closed UTC day and enough completed H4
+// context, then an H1 PDL sweep/reclaim followed by M5 execution. The larger
+// history is intentional: ordinary internal H1 levels are no longer valid
+// HTF locations.
 func bullishFixture(start time.Time) []models.Candle {
-	c := flatM5(start, 5)
-	c[4*12+4].Low = 98.5 // H1 downside liquidity sweep; H1 closes back at 100
+	return bullishFixtureAtUTCOffset(start, 0)
+}
+
+func bullishFixtureAtUTCOffset(start time.Time, sweepHour int) []models.Candle {
+	sweepOffset := 24 + sweepHour
+	c := flatM5(start, sweepOffset+1)
+	c[sweepOffset*12+4].Low = 98.5 // PDL=99.5; H1 closes back at 100
+	executionOffset := time.Duration(sweepOffset+1) * time.Hour
 	c = append(c,
-		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(5*time.Hour + 0*time.Minute), Open: 100, High: 100.5, Low: 99.5, Close: 100, Volume: 10},
-		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(5*time.Hour + 5*time.Minute), Open: 100, High: 100.5, Low: 99.7, Close: 100, Volume: 10},
-		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(5*time.Hour + 10*time.Minute), Open: 100, High: 100.5, Low: 99.8, Close: 100.1, Volume: 10},
+		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(executionOffset + 0*time.Minute), Open: 100, High: 100.5, Low: 99.5, Close: 100, Volume: 10},
+		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(executionOffset + 5*time.Minute), Open: 100, High: 100.5, Low: 99.7, Close: 100, Volume: 10},
+		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(executionOffset + 10*time.Minute), Open: 100, High: 100.5, Low: 99.8, Close: 100.1, Volume: 10},
 		// Last bearish M5 candle before displacement: OB body [100.0, 100.2].
-		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(5*time.Hour + 15*time.Minute), Open: 100.2, High: 100.3, Low: 99.9, Close: 100.0, Volume: 10},
+		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(executionOffset + 15*time.Minute), Open: 100.2, High: 100.3, Low: 99.9, Close: 100.0, Volume: 10},
 		// Bullish displacement closes above the previous three M5 highs (CHOCH).
-		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(5*time.Hour + 20*time.Minute), Open: 100.1, High: 101.8, Low: 100.0, Close: 101.6, Volume: 30},
+		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(executionOffset + 20*time.Minute), Open: 100.1, High: 101.8, Low: 100.0, Close: 101.6, Volume: 30},
 		// Bullish FVG [100.3, 100.8].
-		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(5*time.Hour + 25*time.Minute), Open: 101.1, High: 101.5, Low: 100.8, Close: 101.2, Volume: 20},
-		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(5*time.Hour + 30*time.Minute), Open: 101.2, High: 101.3, Low: 100.9, Close: 101.0, Volume: 10},
+		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(executionOffset + 25*time.Minute), Open: 101.1, High: 101.5, Low: 100.8, Close: 101.2, Volume: 20},
+		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(executionOffset + 30*time.Minute), Open: 101.2, High: 101.3, Low: 100.9, Close: 101.0, Volume: 10},
 		// First FVG retest, closing back above it with a long lower rejection wick.
-		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(5*time.Hour + 35*time.Minute), Open: 100.6, High: 101.1, Low: 100.2, Close: 100.9, Volume: 20},
+		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(executionOffset + 35*time.Minute), Open: 100.6, High: 101.1, Low: 100.2, Close: 100.9, Volume: 20},
 	)
 	return c
 }
 
 func bearishFixture(start time.Time) []models.Candle {
-	c := flatM5(start, 5)
-	c[4*12+4].High = 101.5 // H1 upside liquidity sweep; H1 closes back at 100
+	sweepOffset := 24
+	c := flatM5(start, sweepOffset+1)
+	c[sweepOffset*12+4].High = 101.5 // PDH=100.5; H1 closes back at 100
+	executionOffset := time.Duration(sweepOffset+1) * time.Hour
 	c = append(c,
-		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(5*time.Hour + 0*time.Minute), Open: 100, High: 100.5, Low: 99.5, Close: 100, Volume: 10},
-		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(5*time.Hour + 5*time.Minute), Open: 100, High: 100.4, Low: 99.5, Close: 100, Volume: 10},
-		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(5*time.Hour + 10*time.Minute), Open: 100, High: 100.3, Low: 99.5, Close: 99.9, Volume: 10},
+		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(executionOffset + 0*time.Minute), Open: 100, High: 100.5, Low: 99.5, Close: 100, Volume: 10},
+		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(executionOffset + 5*time.Minute), Open: 100, High: 100.4, Low: 99.5, Close: 100, Volume: 10},
+		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(executionOffset + 10*time.Minute), Open: 100, High: 100.3, Low: 99.5, Close: 99.9, Volume: 10},
 		// Last bullish M5 candle before displacement: OB body [99.8, 100.0].
-		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(5*time.Hour + 15*time.Minute), Open: 99.8, High: 100.1, Low: 99.7, Close: 100.0, Volume: 10},
+		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(executionOffset + 15*time.Minute), Open: 99.8, High: 100.1, Low: 99.7, Close: 100.0, Volume: 10},
 		// Bearish displacement closes below the previous three M5 lows (CHOCH).
-		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(5*time.Hour + 20*time.Minute), Open: 99.9, High: 100.0, Low: 98.2, Close: 98.4, Volume: 30},
+		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(executionOffset + 20*time.Minute), Open: 99.9, High: 100.0, Low: 98.2, Close: 98.4, Volume: 30},
 		// Bearish FVG [99.2, 99.7].
-		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(5*time.Hour + 25*time.Minute), Open: 98.8, High: 99.2, Low: 98.5, Close: 98.8, Volume: 20},
-		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(5*time.Hour + 30*time.Minute), Open: 98.8, High: 99.1, Low: 98.6, Close: 98.9, Volume: 10},
+		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(executionOffset + 25*time.Minute), Open: 98.8, High: 99.2, Low: 98.5, Close: 98.8, Volume: 20},
+		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(executionOffset + 30*time.Minute), Open: 98.8, High: 99.1, Low: 98.6, Close: 98.9, Volume: 10},
 		// First FVG retest, closing back below it with a long upper rejection wick.
-		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(5*time.Hour + 35*time.Minute), Open: 99.3, High: 99.8, Low: 98.9, Close: 99.1, Volume: 20},
+		models.Candle{Symbol: "BTC-USDT", Ts: start.Add(executionOffset + 35*time.Minute), Open: 99.3, High: 99.8, Low: 98.9, Close: 99.1, Volume: 20},
 	)
 	return c
 }
@@ -103,6 +120,9 @@ func TestHTF3Plus1BullishSetup(t *testing.T) {
 	}
 	if !strings.Contains(sig.Reason, "H1") || !strings.Contains(sig.Reason, "CHOCH") || !strings.Contains(sig.Reason, "首次回踩拒絕") {
 		t.Errorf("reason does not explain HTF 3+1: %q", sig.Reason)
+	}
+	if !strings.Contains(sig.Reason, "PDL") {
+		t.Errorf("reason does not identify previous-day low liquidity: %q", sig.Reason)
 	}
 }
 
@@ -132,11 +152,14 @@ func TestHTF3Plus1BearishSetup(t *testing.T) {
 	if !(sig.TakeProfit < sig.Entry && sig.Entry < sig.StopLoss) {
 		t.Fatalf("invalid SELL prices target %.5f entry %.5f stop %.5f", sig.TakeProfit, sig.Entry, sig.StopLoss)
 	}
+	if !strings.Contains(sig.Reason, "PDH") || !strings.Contains(sig.Reason, "定向做空") {
+		t.Errorf("upper-liquidity sweep was not explained as SELL bias: %q", sig.Reason)
+	}
 }
 
 func TestHTF3Plus1DoesNotSeePartialH1Sweep(t *testing.T) {
 	candles := bullishFixture(htfBase)
-	partial := candles[:4*12+6] // hour 4 has swept, but its H1 candle has not closed
+	partial := candles[:24*12+6] // hour 24 has swept, but its H1 candle has not closed
 	biases := PrepareHTFBiases(partial, htfTestParams())
 	if biases[len(biases)-1].Valid {
 		t.Fatalf("partial H1 candle leaked a future bias: %#v", biases[len(biases)-1])
@@ -145,16 +168,95 @@ func TestHTF3Plus1DoesNotSeePartialH1Sweep(t *testing.T) {
 
 func TestHTF3Plus1RequiresH1Sweep(t *testing.T) {
 	candles := bullishFixture(htfBase)
-	candles[4*12+4].Low = 99.5
+	candles[24*12+4].Low = 99.5
 	sig := DecideSilverBullet(candles, nil, htfTestParams(), candles[len(candles)-1].Ts)
 	if sig.Action != models.SignalHold {
 		t.Fatalf("expected HOLD without H1 sweep, got %s (%s)", sig.Action, sig.Reason)
 	}
 }
 
+func TestHTF3Plus1BreakoutWithoutReclaimDoesNotReverse(t *testing.T) {
+	candles := bearishFixture(htfBase)
+	// The H1 bar trades above PDH but finishes above it. That is a breakout,
+	// not an upper-liquidity sweep/reclaim, so it must not create SELL bias.
+	lastInSweepHour := 24*12 + 11
+	candles[lastInSweepHour].Close = 101.0
+	candles[lastInSweepHour].High = 101.2
+	sig := DecideSilverBullet(candles, nil, htfTestParams(), candles[len(candles)-1].Ts)
+	if sig.Action != models.SignalHold {
+		t.Fatalf("expected HOLD after unreclaimed upside breakout, got %s (%s)", sig.Action, sig.Reason)
+	}
+}
+
+func TestHTF3Plus1RequiresMeaningfulHTFSweepPenetration(t *testing.T) {
+	candles := bullishFixture(htfBase)
+	// Prior H1 ATR is 1.0 and the fixed minimum is 0.05 ATR. A 0.04 poke
+	// through PDL is noise, not a qualifying external-liquidity raid.
+	candles[24*12+4].Low = 99.46
+	sig := DecideSilverBullet(candles, nil, htfTestParams(), candles[len(candles)-1].Ts)
+	if sig.Action != models.SignalHold {
+		t.Fatalf("expected HOLD for undersized H1 sweep, got %s (%s)", sig.Action, sig.Reason)
+	}
+}
+
+func TestHTF3Plus1RequiresMeaningfulHTFReclaim(t *testing.T) {
+	candles := bullishFixture(htfBase)
+	// The sweep is deep enough, but the H1 close is only 0.05 ATR above PDL;
+	// the fixed reclaim threshold is 0.10 ATR.
+	lastInSweepHour := 24*12 + 11
+	candles[lastInSweepHour].Close = 99.55
+	sig := DecideSilverBullet(candles, nil, htfTestParams(), candles[len(candles)-1].Ts)
+	if sig.Action != models.SignalHold {
+		t.Fatalf("expected HOLD for shallow H1 reclaim, got %s (%s)", sig.Action, sig.Reason)
+	}
+}
+
+func TestHTF3Plus1DoesNotRelabelRecoveryAfterAcceptedBreakoutAsSweep(t *testing.T) {
+	candles := bullishFixtureAtUTCOffset(htfBase, 1)
+	// Price was already accepted below PDL on the preceding H1 close. The
+	// following recovery above PDL is not a new one-candle raid/reclaim.
+	previousHourClose := 25*12 - 1
+	candles[previousHourClose].Close = 99.0
+	candles[previousHourClose].Low = 98.9
+	candles[25*12].Open = 99.0
+	sig := DecideSilverBullet(candles, nil, htfTestParams(), candles[len(candles)-1].Ts)
+	if sig.Action != models.SignalHold {
+		t.Fatalf("expected HOLD after prior acceptance below PDL, got %s (%s)", sig.Action, sig.Reason)
+	}
+}
+
+func TestHTF3Plus1IgnoresInternalH1Liquidity(t *testing.T) {
+	candles := bearishFixture(htfBase)
+	// A higher level inside both the previous day and current H4 context
+	// makes the normal 101.5 poke merely internal liquidity.
+	candles[20*12].High = 102.0
+	sig := DecideSilverBullet(candles, nil, htfTestParams(), candles[len(candles)-1].Ts)
+	if sig.Action != models.SignalHold {
+		t.Fatalf("expected HOLD for internal H1 sweep away from HTF external liquidity, got %s (%s)", sig.Action, sig.Reason)
+	}
+}
+
+func TestHTF3Plus1RejectsAmbiguousTwoSidedSweep(t *testing.T) {
+	candles := bullishFixture(htfBase)
+	candles[24*12+4].High = 101.5
+	sig := DecideSilverBullet(candles, nil, htfTestParams(), candles[len(candles)-1].Ts)
+	if sig.Action != models.SignalHold {
+		t.Fatalf("expected HOLD when one H1 bar sweeps PDH and PDL, got %s (%s)", sig.Action, sig.Reason)
+	}
+}
+
+func TestHTF3Plus1UsesCompletedH4ExternalLiquidityWhenPreviousDayUnavailable(t *testing.T) {
+	start := time.Date(2026, time.January, 1, 4, 0, 0, 0, time.UTC)
+	candles := bullishFixture(start)
+	sig := DecideSilverBullet(candles, nil, htfTestParams(), candles[len(candles)-1].Ts)
+	if sig.Action != models.SignalBuy || !strings.Contains(sig.Reason, "H4外部低點") {
+		t.Fatalf("expected H4 external-low BUY fallback, got %s (%s)", sig.Action, sig.Reason)
+	}
+}
+
 func TestHTF3Plus1RequiresM5CHOCH(t *testing.T) {
 	candles := bullishFixture(htfBase)
-	displacement := 5*12 + 4
+	displacement := 25*12 + 4
 	candles[displacement] = models.Candle{
 		Symbol: "BTC-USDT", Ts: candles[displacement].Ts,
 		Open: 99.7, High: 100.7, Low: 99.65, Close: 100.4, Volume: 30,
@@ -162,6 +264,35 @@ func TestHTF3Plus1RequiresM5CHOCH(t *testing.T) {
 	sig := DecideSilverBullet(candles, nil, htfTestParams(), candles[len(candles)-1].Ts)
 	if sig.Action != models.SignalHold {
 		t.Fatalf("expected HOLD without close through M5 structure, got %s (%s)", sig.Action, sig.Reason)
+	}
+}
+
+func TestHTF3Plus1RequiresATRDisplacement(t *testing.T) {
+	candles := bullishFixture(htfBase)
+	params := htfTestParams()
+	params.MinDisplacementATR = 3.0
+	sig := DecideSilverBullet(candles, nil, params, candles[len(candles)-1].Ts)
+	if sig.Action != models.SignalHold {
+		t.Fatalf("expected HOLD when M5 displacement body is too small relative to ATR, got %s (%s)", sig.Action, sig.Reason)
+	}
+}
+
+func TestHTF3Plus1RequiresRelativeVolumeExpansion(t *testing.T) {
+	candles := bullishFixture(htfBase)
+	candles[25*12+4].Volume = 10
+	sig := DecideSilverBullet(candles, nil, htfTestParams(), candles[len(candles)-1].Ts)
+	if sig.Action != models.SignalHold {
+		t.Fatalf("expected HOLD without M5 relative-volume expansion, got %s (%s)", sig.Action, sig.Reason)
+	}
+}
+
+func TestHTF3Plus1RejectsTargetTooSmallForCosts(t *testing.T) {
+	candles := bullishFixture(htfBase)
+	params := htfTestParams()
+	params.MinTargetCostMultiple = 20
+	sig := DecideSilverBullet(candles, nil, params, candles[len(candles)-1].Ts)
+	if sig.Action != models.SignalHold {
+		t.Fatalf("expected HOLD when target distance is too small relative to costs, got %s (%s)", sig.Action, sig.Reason)
 	}
 }
 
@@ -202,12 +333,12 @@ func TestHTF3Plus1HonorsRetestWindow(t *testing.T) {
 }
 
 func TestHTF3Plus1BiasExpiresAcrossMissingH1Data(t *testing.T) {
-	candles := flatM5(htfBase, 5)
-	candles[4*12+4].Low = 98.5
+	candles := flatM5(htfBase, 25)
+	candles[24*12+4].Low = 98.5
 	// A multi-hour data gap must age out the H1 bias. Counting only the
 	// compressed list of available H1 buckets would incorrectly keep it live.
 	candles = append(candles, models.Candle{
-		Symbol: "BTC-USDT", Ts: htfBase.Add(10 * time.Hour),
+		Symbol: "BTC-USDT", Ts: htfBase.Add(30 * time.Hour),
 		Open: 100, High: 100.5, Low: 99.5, Close: 100, Volume: 10,
 	})
 	biases := PrepareHTFBiases(candles, htfTestParams())
@@ -218,11 +349,10 @@ func TestHTF3Plus1BiasExpiresAcrossMissingH1Data(t *testing.T) {
 
 func TestHTF3Plus1NoSessionGate(t *testing.T) {
 	for _, hour := range []int{0, 7, 13, 19} {
-		start := time.Date(2026, time.January, 2, hour, 0, 0, 0, time.UTC)
-		candles := bullishFixture(start)
+		candles := bullishFixtureAtUTCOffset(htfBase, hour)
 		sig := DecideSilverBullet(candles, nil, htfTestParams(), candles[len(candles)-1].Ts)
 		if sig.Action != models.SignalBuy {
-			t.Errorf("start hour %d: expected BUY without session gating, got %s (%s)", hour, sig.Action, sig.Reason)
+			t.Errorf("sweep hour %d UTC: expected BUY without session gating, got %s (%s)", hour, sig.Action, sig.Reason)
 		}
 	}
 }

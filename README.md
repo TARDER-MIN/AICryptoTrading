@@ -71,16 +71,26 @@ Other important settings are documented in `.env.example`, including
 
 The active deterministic strategy is fixed as follows:
 
-1. Only a fully closed H1 candle may set direction. A sweep below prior H1
-   liquidity followed by a reclaim permits longs; a sweep above prior H1
-   liquidity followed by a reclaim permits shorts.
-2. M5 must then close through recent structure (CHOCH) with a displacement
-   candle and create an FVG. The last opposite M5 candle is tracked as an OB.
-3. Entry is allowed only on the first retest of a fresh FVG or OB and only
+1. Only external higher-timeframe liquidity counts: the previous UTC-day
+   high/low (PDH/PDL), with the extreme of prior fully completed H4 candles as
+   a fallback. Ordinary internal H1 highs and lows cannot set direction.
+2. Direction follows the move after the liquidity raid, not the raid wick. A
+   closed H1 candle that sweeps above external highs and reclaims below creates
+   SELL bias; one that sweeps below external lows and reclaims above creates
+   BUY bias. A close outside is a breakout, not a reversal, and a candle that
+   raids both sides is ignored.
+3. The H1 raid must penetrate the level by at least 0.05 H1 ATR and reclaim
+   inside it by at least 0.10 H1 ATR. M5 must then close through recent
+   structure (CHOCH) with a displacement body of at least 60% of its range,
+   0.8 M5 ATR, and 1.2 times prior average M5 volume while leaving an FVG. The
+   last opposite M5 candle is tracked as an OB.
+4. Entry is allowed only on the first retest of a fresh FVG or OB and only
    when that candle rejects the zone. A first touch without valid rejection
    consumes the zone.
-4. The stop is beyond the triggering FVG/OB invalidation edge plus buffer.
-   The entire take-profit is fixed at exactly 1:1.5. There is no session gate.
+5. The stop is beyond the triggering FVG/OB invalidation edge plus buffer.
+   The entire take-profit is fixed at exactly 1:1.5. The planned target must
+   also span at least five times the estimated round-trip fee and slippage;
+   smaller setups are skipped. There is no session gate.
 
 All H1 bars are built from already-closed M5 candles. A partial H1 candle can
 never create direction in live evaluation or historical replay.
@@ -94,6 +104,11 @@ crypto perpetuals and requests up to 180 days from BingX. The perpetual-futures
 5-minute endpoint currently returns only about 45 days. The dashboard always
 shows the actual first/last timestamps and candle count; it never substitutes
 spot candles for missing futures history.
+
+Every report records the strategy-rule version. After an upgrade, an older
+report remains visible only as a labelled baseline for reusing its exact
+symbols and dates; it is never presented as evidence for the new rules. The
+upgrade resets old active metrics and keeps automatic trading paused.
 
 The first 80% is
 the development window: every fixed candidate is scored over three

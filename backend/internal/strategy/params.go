@@ -20,10 +20,7 @@ func LoadParams(ctx context.Context, pool *pgxpool.Pool) (SBParams, error) {
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return DefaultSBParams(), err
 	}
-	backfillHTF3Plus1Defaults(&p)
-	// Risk/reward is a fixed strategy rule, not a tunable database value.
-	p.RiskRewardRatio = 1.5
-	return p, nil
+	return NormalizeParams(p), nil
 }
 
 // backfillHTF3Plus1Defaults upgrades parameter JSON saved by the retired
@@ -43,11 +40,29 @@ func backfillHTF3Plus1Defaults(p *SBParams) {
 	if p.StopBufferPct < 0 {
 		p.StopBufferPct = d.StopBufferPct
 	}
-	if p.MinDisplacementBodyPct == 0 {
+	if p.MinDisplacementBodyPct <= 0 {
 		p.MinDisplacementBodyPct = d.MinDisplacementBodyPct
 	}
-	if p.MaxOpposingWickPct == 0 {
+	if p.MaxOpposingWickPct <= 0 {
 		p.MaxOpposingWickPct = d.MaxOpposingWickPct
+	}
+	if p.MinHTFSweepATR <= 0 {
+		p.MinHTFSweepATR = d.MinHTFSweepATR
+	}
+	if p.MinHTFReclaimATR <= 0 {
+		p.MinHTFReclaimATR = d.MinHTFReclaimATR
+	}
+	if p.MinDisplacementATR <= 0 {
+		p.MinDisplacementATR = d.MinDisplacementATR
+	}
+	if p.MinDisplacementVolume <= 0 {
+		p.MinDisplacementVolume = d.MinDisplacementVolume
+	}
+	if p.DisplacementATRLookback < 2 {
+		p.DisplacementATRLookback = d.DisplacementATRLookback
+	}
+	if p.DisplacementVolLookback < 2 {
+		p.DisplacementVolLookback = d.DisplacementVolLookback
 	}
 	if p.CHOCHLookback < 2 {
 		p.CHOCHLookback = d.CHOCHLookback
@@ -60,6 +75,12 @@ func backfillHTF3Plus1Defaults(p *SBParams) {
 		p.OrderBlockLookback = d.OrderBlockLookback
 		p.RequireRejection = true
 	}
+	if p.EstimatedRoundTripCostPct <= 0 {
+		p.EstimatedRoundTripCostPct = d.EstimatedRoundTripCostPct
+	}
+	if p.MinTargetCostMultiple <= 0 {
+		p.MinTargetCostMultiple = d.MinTargetCostMultiple
+	}
 }
 
 // SaveParams persists a new active parameter set plus the backtest metrics
@@ -69,7 +90,7 @@ func backfillHTF3Plus1Defaults(p *SBParams) {
 func SaveParams(ctx context.Context, pool *pgxpool.Pool, params SBParams, trainMetrics, validationMetrics, testMetrics, lastReport []byte) error {
 	// Keep optimized and externally supplied parameter sets on the fixed
 	// 1:1.5 risk/reward rule as well.
-	params.RiskRewardRatio = 1.5
+	params = NormalizeParams(params)
 	paramsJSON, err := json.Marshal(params)
 	if err != nil {
 		return err

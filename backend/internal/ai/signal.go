@@ -51,9 +51,10 @@ type SignalResult struct {
 }
 
 // GenerateSignal asks Claude to confirm or reject an HTF 3+1 setup. The rule
-// engine has already found a fully-closed H1 liquidity sweep/reclaim, M5
-// CHOCH with displacement, a fresh FVG or order block, and its first-retest
-// rejection. There is no time-of-day session gate. This call is the second,
+// engine has already found a fully-closed H1 external-liquidity sweep/reclaim,
+// M5 CHOCH with ATR/volume-confirmed displacement, a fresh FVG or order block,
+// its first-retest rejection, and a target large enough relative to execution
+// costs. There is no time-of-day session gate. This call is the second,
 // human-judgment-shaped
 // opinion the rule doesn't have: given that every mechanical filter already
 // passed, does the setup actually look tradeable - is the sweep a genuine
@@ -82,11 +83,11 @@ func (c *Client) GenerateSignal(ctx context.Context, req SignalRequest) (*Signal
 				"action": map[string]any{
 					"type":        "string",
 					"enum":        []string{"BUY", "SELL", "HOLD"},
-					"description": "確認規則偵測到的方向進場，或判斷這組HTF 3+1設定不夠可信而選擇HOLD。規則引擎已驗證：已收線H1掃流動性並收回、M5 CHOCH與位移、Fresh FVG或OB第一次回踩拒絕。只能跟規則方向一致或HOLD，禁止反向。",
+					"description": "確認規則偵測到的方向進場，或判斷這組HTF 3+1設定不夠可信而選擇HOLD。規則引擎已驗證：已收線H1掃PDH/PDL或H4外部流動性並收回；掃上方只允許SELL、掃下方只允許BUY；M5 CHOCH與ATR/量能位移、Fresh FVG或OB第一次回踩拒絕及成本距離門檻皆已通過。只能跟規則方向一致或HOLD，禁止反向。",
 				},
 				"confidence": map[string]any{
 					"type":        "number",
-					"description": "0到1的信心。評估H1掃掠與收回是否明確、M5 CHOCH突破幅度、位移K實體品質、FVG/OB是否乾淨、第一次回踩拒絕是否有力、近期結構與資金費率是否配合。多項只壓線通過時信心應低。",
+					"description": "0到1的信心。評估H1外部流動性掃掠與收回是否明確、M5 CHOCH突破幅度、位移K實體/ATR/量能品質、FVG/OB是否乾淨、第一次回踩拒絕是否有力、近期結構與資金費率是否配合。多項只壓線通過時信心應低。",
 				},
 				"entry_hint": map[string]any{
 					"type":        "number",
@@ -169,10 +170,10 @@ func buildSignalPrompt(req SignalRequest) string {
 
 	fmt.Fprintf(&b, "規則引擎偵測到的HTF 3+1設定（機械條件皆已通過）：\n")
 	setup := req.Setup
-	fmt.Fprintf(&b, "方向：%s\nH1 Sweep時間：%s，掃掠極值：%.6g\nM5 CHOCH時間：%s，突破結構價：%.6g\nM5 FVG形成時間：%s，缺口：%.6g ~ %.6g，位移K實體佔比：%.0f%%\n實際觸發區：%s；M5 OB body：%.6g ~ %.6g\n規則固定進場/停損/停利（完整1:1.5）：%.6g / %.6g / %.6g\n規則理由：%s\n\n",
+	fmt.Fprintf(&b, "方向：%s\nH1 Sweep時間：%s，掃掠極值：%.6g\nM5 CHOCH時間：%s，突破結構價：%.6g\nM5 FVG形成時間：%s，缺口：%.6g ~ %.6g，位移K實體佔比：%.0f%%，實體/ATR：%.2f倍，量能/均量：%.2f倍\n實際觸發區：%s；M5 OB body：%.6g ~ %.6g\n規則固定進場/停損/停利（完整1:1.5）：%.6g / %.6g / %.6g\n規則理由：%s\n\n",
 		setup.Action, setup.SweepTs.UTC().Format("01/02 15:04"), setup.SweepPrice,
 		setup.CHOCHTs.UTC().Format("01/02 15:04"), setup.CHOCHLevel,
-		setup.FVGTs.UTC().Format("01/02 15:04"), setup.FVGLow, setup.FVGHigh, setup.DisplacementBodyPct*100,
+		setup.FVGTs.UTC().Format("01/02 15:04"), setup.FVGLow, setup.FVGHigh, setup.DisplacementBodyPct*100, setup.DisplacementATR, setup.DisplacementVolume,
 		setup.EntryZoneType, setup.BreakerLow, setup.BreakerHigh,
 		setup.Entry, setup.StopLoss, setup.TakeProfit, setup.Reason)
 

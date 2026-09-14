@@ -9,6 +9,13 @@ import (
 	"cryptotrading/internal/strategy"
 )
 
+func TestOptimizeReportAlwaysCarriesCurrentStrategyVersion(t *testing.T) {
+	report := Optimize(nil, nil, nil, 0.6, 0.2, CostModel{})
+	if report.StrategyVersion != strategy.StrategyVersion {
+		t.Fatalf("strategy version = %q, want %q", report.StrategyVersion, strategy.StrategyVersion)
+	}
+}
+
 func TestRobustSelectionRewardsRepeatedDevelopmentPerformanceWithoutFinalLeakage(t *testing.T) {
 	base := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
 	developmentEnd := base.Add(40 * time.Hour)
@@ -138,7 +145,7 @@ func TestDeploymentGateBlocksUnprofitableFinalBuySide(t *testing.T) {
 	testMetrics := Metrics(trades, time.Time{}, time.Time{}, CostModel{})
 	report := OptimizeReport{
 		CandidatesPassed: 1,
-		RobustSelection: RobustSelectionReport{UsedFallback: false},
+		RobustSelection:  RobustSelectionReport{UsedFallback: false},
 		WalkForward: WalkForwardReport{
 			TotalFolds: 4, PassedFolds: 3,
 			AggregateMetrics: Result{

@@ -110,7 +110,7 @@ func buildWatchlistPrompt(candidates []WatchlistCandidate, n int, lookbackDays i
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].RecentSignalCount > sorted[j].RecentSignalCount })
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "以下是候選永續合約清單（依recent_signal_count由高到低排序，共%d檔，皆為目前保證金×槓桿設定下可下單的合約）。recent_signal_count是拿目前上線中的完整HTF 3+1規則（已收線H1掃流動性定向，M5 CHOCH＋位移後Fresh FVG／OB首次回踩拒絕）對這檔合約最近%d天真實歷史K線回測出的訊號次數。請選出剛好%d檔最容易產生訊號的合約：\n\n", len(sorted), lookbackDays, n)
+	fmt.Fprintf(&b, "以下是候選永續合約清單（依recent_signal_count由高到低排序，共%d檔，皆為目前保證金×槓桿設定下可下單的合約）。recent_signal_count是拿目前上線中的完整HTF 3+1規則（H1掃PDH/PDL或H4外部流動性後收回，掃上方找空、掃下方找多；M5 CHOCH＋ATR/量能位移後Fresh FVG／OB首次回踩拒絕，且通過成本距離門檻）對這檔合約最近%d天真實歷史K線回測出的訊號次數。請選出剛好%d檔最容易產生訊號的合約：\n\n", len(sorted), lookbackDays, n)
 	fmt.Fprintf(&b, "%-14s %20s %12s %10s %16s %10s\n", "合約", "recent_signal_count", "價格", "24h漲跌%", "24h成交金額(USDT)", "資金費率%")
 	for _, c := range sorted {
 		fmt.Fprintf(&b, "%-14s %20d %12.6g %9.2f%% %16.0f %9.4f%%\n",

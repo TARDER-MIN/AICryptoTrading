@@ -103,6 +103,7 @@ type Result struct {
 func Run(candles []models.Candle, anchorCandles []models.Candle, params strategy.SBParams, costs CostModel, funding []FundingEvent) []Trade {
 	_ = anchorCandles
 	costs = costs.normalized()
+	params = strategy.NormalizeParams(params)
 	var trades []Trade
 	var open *Trade
 	lastFVGTs := time.Time{}

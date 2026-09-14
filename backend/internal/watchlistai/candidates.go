@@ -40,8 +40,9 @@ type Candidate struct {
 	QuoteVolume24h float64 `json:"quote_volume_24h"`
 	FundingRate    float64 `json:"funding_rate"`
 	// RecentSignalCount is how many HTF 3+1 trades the CURRENTLY ACTIVE
-	// rules (closed-H1 sweep, M5 CHOCH/displacement, fresh FVG or OB first
-	// retest rejection) would have produced for this
+	// rules (closed-H1 external-liquidity sweep/reclaim, M5 CHOCH with
+	// ATR/volume displacement, fresh FVG or OB first-retest rejection, and
+	// execution-cost distance floor) would have produced for this
 	// symbol over the last SignalScanLookbackDays - filled in by
 	// AnnotateSignalFrequency, zero until then. This is the primary
 	// selection signal for "which symbols actually produce signals under
