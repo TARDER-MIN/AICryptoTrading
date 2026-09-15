@@ -32,7 +32,7 @@ const (
 	fixedRiskRewardRatio = 1.5
 	// StrategyVersion is persisted with each research report so the dashboard
 	// can distinguish an old baseline from results produced by these rules.
-	StrategyVersion = "htf_location_3plus1_v3"
+	StrategyVersion = "ict2022_sweep_mss_fvg_v4"
 )
 
 // AnchorSymbols and AnchorSymbolFor remain for source compatibility with the
@@ -59,11 +59,12 @@ type SBParams struct {
 	StopBufferPct   float64 `json:"stop_buffer_pct"`    // stop beyond the selected M5 FVG/OB edge
 	RiskRewardRatio float64 `json:"risk_reward_ratio"`  // fixed to 1.5 when loaded/saved
 
-	HTFStructureLookback      int     `json:"htf_structure_lookback"`       // completed H4 bars used for range/structure context
-	HTFPivotStrength          int     `json:"htf_pivot_strength"`           // completed H4 bars required on each side of a pivot
-	HTFZoneATRMultiple        float64 `json:"htf_zone_atr_multiple"`        // maximum distance from H4 SNR edge, in H4 ATR
-	CHOCHPivotStrength        int     `json:"choch_pivot_strength"`         // completed M5 bars required on each side of a pivot
-	TargetBarrierBufferATR    float64 `json:"target_barrier_buffer_atr"`    // clearance kept before opposing H4/H1 structure
+	HTFStructureLookback   int     `json:"htf_structure_lookback"`    // completed H4 bars used for range/structure context
+	HTFPivotStrength       int     `json:"htf_pivot_strength"`        // completed H4 bars required on each side of a pivot
+	HTFZoneATRMultiple     float64 `json:"htf_zone_atr_multiple"`     // maximum distance from H4 SNR edge, in H4 ATR
+	CHOCHPivotStrength     int     `json:"choch_pivot_strength"`      // completed M5 bars required on each side of a pivot
+	TargetBarrierBufferATR float64 `json:"target_barrier_buffer_atr"` // clearance kept before opposing H4/H1 structure
+	RelaxHTFContext        bool    `json:"relax_htf_context"`         // V4 research: H4 trend/location is context, not an entry veto
 
 	MinHTFSweepATR            float64 `json:"min_htf_sweep_atr"`             // wick penetration beyond liquidity, in H1 ATR
 	MinHTFReclaimATR          float64 `json:"min_htf_reclaim_atr"`           // close back inside liquidity, in H1 ATR
@@ -84,31 +85,32 @@ type SBParams struct {
 func DefaultSBParams() SBParams {
 	return SBParams{
 		SwingLookback:   6,
-		MinFVGSizePct:   0.1,
-		MaxBarsForSweep: 4,
+		MinFVGSizePct:   0.05,
+		MaxBarsForSweep: 6,
 		StopBufferPct:   0.1,
 		RiskRewardRatio: 1.5,
 
 		HTFStructureLookback:   12,
-		HTFPivotStrength:       2,
-		HTFZoneATRMultiple:     0.75,
-		CHOCHPivotStrength:     2,
-		TargetBarrierBufferATR: 0.10,
+		HTFPivotStrength:       1,
+		HTFZoneATRMultiple:     1.25,
+		CHOCHPivotStrength:     1,
+		TargetBarrierBufferATR: 0.05,
+		RelaxHTFContext:        true,
 
-		MinHTFSweepATR:            0.05,
-		MinHTFReclaimATR:          0.10,
-		MinDisplacementBodyPct:    0.6,
-		MaxOpposingWickPct:        0.25,
-		MinDisplacementATR:        0.8,
-		MinDisplacementVolume:     1.2,
+		MinHTFSweepATR:            0.03,
+		MinHTFReclaimATR:          0.03,
+		MinDisplacementBodyPct:    0.50,
+		MaxOpposingWickPct:        0.35,
+		MinDisplacementATR:        0.50,
+		MinDisplacementVolume:     1.00,
 		DisplacementATRLookback:   14,
 		DisplacementVolLookback:   20,
-		CHOCHLookback:             12,
-		MaxBarsForRetest:          6,
+		CHOCHLookback:             16,
+		MaxBarsForRetest:          12,
 		OrderBlockLookback:        10,
 		RequireRejection:          true,
 		EstimatedRoundTripCostPct: 0.14,
-		MinTargetCostMultiple:     5,
+		MinTargetCostMultiple:     3,
 	}
 }
 
@@ -117,25 +119,24 @@ func DefaultSBParams() SBParams {
 // an externally supplied value could alter the strategy's 1:1.5 target.
 func NormalizeParams(params SBParams) SBParams {
 	backfillHTF3Plus1Defaults(&params)
-	d := DefaultSBParams()
-	// These are fixed quality floors, not optimizer knobs. Persisted legacy
-	// JSON may only make them stricter, never weaken the current strategy.
+	// V4 keeps the core ICT sequence mandatory while allowing research
+	// thresholds to be loosened without restoring the old restrictive defaults.
 	params.HTFStructureLookback = max(params.HTFStructureLookback, 4)
-	params.HTFPivotStrength = max(params.HTFPivotStrength, d.HTFPivotStrength)
-	params.HTFZoneATRMultiple = math.Min(params.HTFZoneATRMultiple, d.HTFZoneATRMultiple)
-	params.CHOCHPivotStrength = max(params.CHOCHPivotStrength, d.CHOCHPivotStrength)
+	params.HTFPivotStrength = max(params.HTFPivotStrength, 1)
+	params.HTFZoneATRMultiple = math.Max(params.HTFZoneATRMultiple, 0.25)
+	params.CHOCHPivotStrength = max(params.CHOCHPivotStrength, 1)
 	params.CHOCHLookback = max(params.CHOCHLookback, params.CHOCHPivotStrength*2+1)
-	params.TargetBarrierBufferATR = math.Max(params.TargetBarrierBufferATR, d.TargetBarrierBufferATR)
-	params.MinHTFSweepATR = math.Max(params.MinHTFSweepATR, d.MinHTFSweepATR)
-	params.MinHTFReclaimATR = math.Max(params.MinHTFReclaimATR, d.MinHTFReclaimATR)
-	params.MinDisplacementBodyPct = math.Max(params.MinDisplacementBodyPct, d.MinDisplacementBodyPct)
-	params.MaxOpposingWickPct = math.Min(params.MaxOpposingWickPct, d.MaxOpposingWickPct)
-	params.MinDisplacementATR = math.Max(params.MinDisplacementATR, d.MinDisplacementATR)
-	params.MinDisplacementVolume = math.Max(params.MinDisplacementVolume, d.MinDisplacementVolume)
-	params.DisplacementATRLookback = max(params.DisplacementATRLookback, d.DisplacementATRLookback)
-	params.DisplacementVolLookback = max(params.DisplacementVolLookback, d.DisplacementVolLookback)
+	params.TargetBarrierBufferATR = math.Max(params.TargetBarrierBufferATR, 0)
+	params.MinHTFSweepATR = math.Max(params.MinHTFSweepATR, 0.01)
+	params.MinHTFReclaimATR = math.Max(params.MinHTFReclaimATR, 0.01)
+	params.MinDisplacementBodyPct = math.Max(params.MinDisplacementBodyPct, 0.35)
+	params.MaxOpposingWickPct = math.Min(math.Max(params.MaxOpposingWickPct, 0.20), 0.60)
+	params.MinDisplacementATR = math.Max(params.MinDisplacementATR, 0.35)
+	params.MinDisplacementVolume = math.Max(params.MinDisplacementVolume, 0.80)
+	params.DisplacementATRLookback = max(params.DisplacementATRLookback, 5)
+	params.DisplacementVolLookback = max(params.DisplacementVolLookback, 5)
 	params.RequireRejection = true
-	params.MinTargetCostMultiple = math.Max(params.MinTargetCostMultiple, d.MinTargetCostMultiple)
+	params.MinTargetCostMultiple = math.Max(params.MinTargetCostMultiple, 2)
 	params.RiskRewardRatio = fixedRiskRewardRatio
 	return params
 }
@@ -406,8 +407,11 @@ func DecideSilverBulletWithBias(candles []models.Candle, params SBParams, bias H
 }
 
 func targetPathClear(entry, target float64, bias HTFBias, params SBParams) bool {
-	if entry <= 0 || target <= 0 || bias.TargetBarrier <= 0 || bias.SweepATR <= 0 {
+	if entry <= 0 || target <= 0 {
 		return false
+	}
+	if bias.TargetBarrier <= 0 || bias.SweepATR <= 0 {
+		return true
 	}
 	buffer := bias.SweepATR * params.TargetBarrierBufferATR
 	if bias.Action == models.SignalBuy {
@@ -940,32 +944,41 @@ func buildHTFContext(closedH4 []h1Bar, sweep h1Bar, action models.SignalAction, 
 	}
 	equilibrium := (low + high) / 2
 	trend := classifyH4Trend(window, params.HTFPivotStrength)
-	if action == models.SignalBuy && trend == "空頭結構" {
-		return htfContext{}
-	}
-	if action == models.SignalSell && trend == "多頭結構" {
-		return htfContext{}
+	if !params.RelaxHTFContext {
+		if action == models.SignalBuy && trend == "空頭結構" {
+			return htfContext{}
+		}
+		if action == models.SignalSell && trend == "多頭結構" {
+			return htfContext{}
+		}
 	}
 
 	zone := ""
 	edgeDistance := atr * params.HTFZoneATRMultiple
 	if action == models.SignalBuy {
-		if sweep.Low > equilibrium {
+		if !params.RelaxHTFContext && sweep.Low > equilibrium {
 			return htfContext{}
 		}
 		if sweep.Low <= low+edgeDistance {
 			zone = "H4折價SNR"
+		} else if params.RelaxHTFContext && sweep.Low <= equilibrium {
+			zone = "H4折價區"
 		}
 	} else {
-		if sweep.High < equilibrium {
+		if !params.RelaxHTFContext && sweep.High < equilibrium {
 			return htfContext{}
 		}
 		if sweep.High >= high-edgeDistance {
 			zone = "H4溢價SNR"
+		} else if params.RelaxHTFContext && sweep.High >= equilibrium {
+			zone = "H4溢價區"
 		}
 	}
 	if zone == "" {
 		zone = matchingFreshH4Zone(window, sweep, action, atr)
+	}
+	if zone == "" && params.RelaxHTFContext {
+		zone = "H4背景觀察"
 	}
 	if zone == "" {
 		return htfContext{}
@@ -1102,7 +1115,7 @@ func detectH1Sweeps(bars []h1Bar, params SBParams) []h1Sweep {
 		if level, name := nearestH1StructureBarrier(bars[:i], action, bar.Close); level > 0 {
 			considerBarrier(level, name)
 		}
-		if barrier <= 0 {
+		if barrier <= 0 && !params.RelaxHTFContext {
 			continue
 		}
 
