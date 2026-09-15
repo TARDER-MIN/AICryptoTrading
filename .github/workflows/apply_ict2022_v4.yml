@@ -1,0 +1,260 @@
+name: Apply ICT2022 V4 Patch
+
+on:
+  push:
+    branches: [bingx-ict2022-v4]
+    paths:
+      - .github/workflows/apply_ict2022_v4.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: bingx-ict2022-v4
+          fetch-depth: 0
+
+      - name: Apply strategy patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('backend/internal/strategy/silverbullet.go')
+          s = p.read_text(encoding='utf-8')
+
+          replacements = [
+              ('StrategyVersion = "htf_location_3plus1_v3"', 'StrategyVersion = "ict2022_sweep_mss_fvg_v4"'),
+              ('\t\tMinFVGSizePct:   0.1,\n\t\tMaxBarsForSweep: 4,', '\t\tMinFVGSizePct:   0.05,\n\t\tMaxBarsForSweep: 6,'),
+              ('\t\tHTFPivotStrength:       2,\n\t\tHTFZoneATRMultiple:     0.75,\n\t\tCHOCHPivotStrength:     2,\n\t\tTargetBarrierBufferATR: 0.10,', '\t\tHTFPivotStrength:       1,\n\t\tHTFZoneATRMultiple:     1.25,\n\t\tCHOCHPivotStrength:     1,\n\t\tTargetBarrierBufferATR: 0.05,'),
+              ('\t\tMinHTFSweepATR:            0.05,\n\t\tMinHTFReclaimATR:          0.10,\n\t\tMinDisplacementBodyPct:    0.6,\n\t\tMaxOpposingWickPct:        0.25,\n\t\tMinDisplacementATR:        0.8,\n\t\tMinDisplacementVolume:     1.2,', '\t\tMinHTFSweepATR:            0.03,\n\t\tMinHTFReclaimATR:          0.03,\n\t\tMinDisplacementBodyPct:    0.50,\n\t\tMaxOpposingWickPct:        0.35,\n\t\tMinDisplacementATR:        0.50,\n\t\tMinDisplacementVolume:     1.00,'),
+              ('\t\tCHOCHLookback:             12,\n\t\tMaxBarsForRetest:          6,', '\t\tCHOCHLookback:             16,\n\t\tMaxBarsForRetest:          12,'),
+              ('\t\tMinTargetCostMultiple:     5,', '\t\tMinTargetCostMultiple:     3,'),
+          ]
+
+          for old, new in replacements:
+              if old not in s:
+                  raise SystemExit(f'missing expected snippet:\n{old}')
+              s = s.replace(old, new, 1)
+
+          old_norm = '''\t// These are fixed quality floors, not optimizer knobs. Persisted legacy
+\t// JSON may only make them stricter, never weaken the current strategy.
+\tparams.HTFStructureLookback = max(params.HTFStructureLookback, 4)
+\tparams.HTFPivotStrength = max(params.HTFPivotStrength, d.HTFPivotStrength)
+\tparams.HTFZoneATRMultiple = math.Min(params.HTFZoneATRMultiple, d.HTFZoneATRMultiple)
+\tparams.CHOCHPivotStrength = max(params.CHOCHPivotStrength, d.CHOCHPivotStrength)
+\tparams.CHOCHLookback = max(params.CHOCHLookback, params.CHOCHPivotStrength*2+1)
+\tparams.TargetBarrierBufferATR = math.Max(params.TargetBarrierBufferATR, d.TargetBarrierBufferATR)
+\tparams.MinHTFSweepATR = math.Max(params.MinHTFSweepATR, d.MinHTFSweepATR)
+\tparams.MinHTFReclaimATR = math.Max(params.MinHTFReclaimATR, d.MinHTFReclaimATR)
+\tparams.MinDisplacementBodyPct = math.Max(params.MinDisplacementBodyPct, d.MinDisplacementBodyPct)
+\tparams.MaxOpposingWickPct = math.Min(params.MaxOpposingWickPct, d.MaxOpposingWickPct)
+\tparams.MinDisplacementATR = math.Max(params.MinDisplacementATR, d.MinDisplacementATR)
+\tparams.MinDisplacementVolume = math.Max(params.MinDisplacementVolume, d.MinDisplacementVolume)
+\tparams.DisplacementATRLookback = max(params.DisplacementATRLookback, d.DisplacementATRLookback)
+\tparams.DisplacementVolLookback = max(params.DisplacementVolLookback, d.DisplacementVolLookback)
+\tparams.RequireRejection = true
+\tparams.MinTargetCostMultiple = math.Max(params.MinTargetCostMultiple, d.MinTargetCostMultiple)
+\tparams.RiskRewardRatio = fixedRiskRewardRatio
+'''
+          new_norm = '''\t// V4 keeps the core ICT sequence mandatory (H1 sweep -> M5 CHOCH/MSS ->
+\t// displacement FVG -> first rejecting retest) but no longer lets legacy
+\t// defaults silently turn ATR/volume/H4 location into overly strict gates.
+\t// Bounds below are safety floors/ceilings, not fixed optimizer values.
+\tparams.HTFStructureLookback = max(params.HTFStructureLookback, 4)
+\tparams.HTFPivotStrength = max(params.HTFPivotStrength, 1)
+\tparams.HTFZoneATRMultiple = math.Max(params.HTFZoneATRMultiple, 0.25)
+\tparams.CHOCHPivotStrength = max(params.CHOCHPivotStrength, 1)
+\tparams.CHOCHLookback = max(params.CHOCHLookback, params.CHOCHPivotStrength*2+1)
+\tparams.TargetBarrierBufferATR = math.Max(params.TargetBarrierBufferATR, 0)
+\tparams.MinHTFSweepATR = math.Max(params.MinHTFSweepATR, 0.01)
+\tparams.MinHTFReclaimATR = math.Max(params.MinHTFReclaimATR, 0.01)
+\tparams.MinDisplacementBodyPct = math.Max(params.MinDisplacementBodyPct, 0.35)
+\tparams.MaxOpposingWickPct = math.Min(math.Max(params.MaxOpposingWickPct, 0.20), 0.60)
+\tparams.MinDisplacementATR = math.Max(params.MinDisplacementATR, 0.35)
+\tparams.MinDisplacementVolume = math.Max(params.MinDisplacementVolume, 0.80)
+\tparams.DisplacementATRLookback = max(params.DisplacementATRLookback, 5)
+\tparams.DisplacementVolLookback = max(params.DisplacementVolLookback, 5)
+\tparams.RequireRejection = true
+\tparams.MinTargetCostMultiple = math.Max(params.MinTargetCostMultiple, 2)
+\tparams.RiskRewardRatio = fixedRiskRewardRatio
+\t_ = d
+'''
+          if old_norm not in s:
+              raise SystemExit('NormalizeParams block changed; refusing blind patch')
+          s = s.replace(old_norm, new_norm, 1)
+
+          old_target = '''func targetPathClear(entry, target float64, bias HTFBias, params SBParams) bool {
+\tif entry <= 0 || target <= 0 || bias.TargetBarrier <= 0 || bias.SweepATR <= 0 {
+\t\treturn false
+\t}
+'''
+          new_target = '''func targetPathClear(entry, target float64, bias HTFBias, params SBParams) bool {
+\tif entry <= 0 || target <= 0 {
+\t\treturn false
+\t}
+\t// No confirmed opposing HTF barrier is information, not a reason to
+\t// discard the setup. If a barrier exists, the normal clearance test below
+\t// still applies.
+\tif bias.TargetBarrier <= 0 || bias.SweepATR <= 0 {
+\t\treturn true
+\t}
+'''
+          if old_target not in s:
+              raise SystemExit('targetPathClear block changed; refusing blind patch')
+          s = s.replace(old_target, new_target, 1)
+
+          old_context = '''\ttrend := classifyH4Trend(window, params.HTFPivotStrength)
+\tif action == models.SignalBuy && trend == "空頭結構" {
+\t\treturn htfContext{}
+\t}
+\tif action == models.SignalSell && trend == "多頭結構" {
+\t\treturn htfContext{}
+\t}
+
+\tzone := ""
+\tedgeDistance := atr * params.HTFZoneATRMultiple
+\tif action == models.SignalBuy {
+\t\tif sweep.Low > equilibrium {
+\t\t\treturn htfContext{}
+\t\t}
+\t\tif sweep.Low <= low+edgeDistance {
+\t\t\tzone = "H4折價SNR"
+\t\t}
+\t} else {
+\t\tif sweep.High < equilibrium {
+\t\t\treturn htfContext{}
+\t\t}
+\t\tif sweep.High >= high-edgeDistance {
+\t\t\tzone = "H4溢價SNR"
+\t\t}
+\t}
+\tif zone == "" {
+\t\tzone = matchingFreshH4Zone(window, sweep, action, atr)
+\t}
+\tif zone == "" {
+\t\treturn htfContext{}
+\t}
+'''
+          new_context = '''\ttrend := classifyH4Trend(window, params.HTFPivotStrength)
+
+\t// V4 records H4 trend/location as context instead of vetoing an otherwise
+\t// valid H1 liquidity reversal. This preserves location information for
+\t// research while preventing the old double-filter from collapsing sample
+\t// size across 20 symbols.
+\tzone := ""
+\tedgeDistance := atr * params.HTFZoneATRMultiple
+\tif action == models.SignalBuy {
+\t\tif sweep.Low <= low+edgeDistance {
+\t\t\tzone = "H4折價SNR"
+\t\t} else if sweep.Low <= equilibrium {
+\t\t\tzone = "H4折價區"
+\t\t}
+\t} else {
+\t\tif sweep.High >= high-edgeDistance {
+\t\t\tzone = "H4溢價SNR"
+\t\t} else if sweep.High >= equilibrium {
+\t\t\tzone = "H4溢價區"
+\t\t}
+\t}
+\tif zone == "" {
+\t\tzone = matchingFreshH4Zone(window, sweep, action, atr)
+\t}
+\tif zone == "" {
+\t\tzone = "H4背景觀察"
+\t}
+'''
+          if old_context not in s:
+              raise SystemExit('buildHTFContext block changed; refusing blind patch')
+          s = s.replace(old_context, new_context, 1)
+
+          old_barrier = '''\t\tif barrier <= 0 {
+\t\t\tcontinue
+\t\t}
+
+\t\tout = append(out, h1Sweep{'''
+          new_barrier = '''\t\t// A missing confirmed opposing structure no longer invalidates the H1
+\t\t// sweep. targetPathClear will enforce clearance whenever a barrier is
+\t\t// actually known.
+
+\t\tout = append(out, h1Sweep{'''
+          if old_barrier not in s:
+              raise SystemExit('barrier hard-gate block changed; refusing blind patch')
+          s = s.replace(old_barrier, new_barrier, 1)
+
+          p.write_text(s, encoding='utf-8')
+          PY
+
+          gofmt -w backend/internal/strategy/silverbullet.go
+
+      - name: Run strategy tests
+        id: tests
+        continue-on-error: true
+        shell: bash
+        run: |
+          cd backend
+          go test ./internal/strategy ./internal/backtest 2>&1 | tee ../ICT2022_V4_TEST_REPORT.txt
+
+      - name: Write patch notes
+        shell: bash
+        run: |
+          cat > ICT2022_V4_CHANGES.txt <<'EOF'
+          ICT2022 V4 changes
+          ==================
+          Core sequence kept mandatory:
+          - H1 liquidity sweep/reclaim
+          - Sweep high => SELL only; sweep low => BUY only
+          - M5 CHOCH/MSS
+          - Directional displacement + fresh FVG
+          - First rejecting retest
+          - Fixed RR 1:1.5
+
+          Relaxed/softened filters:
+          - FVG default minimum 0.10% -> 0.05%
+          - H1 sweep bias lifetime 4h -> 6h
+          - CHOCH pivot strength 2 -> 1
+          - Retest window 6 M5 bars -> 12 M5 bars
+          - Displacement ATR 0.8x -> 0.5x
+          - Displacement volume 1.2x -> 1.0x
+          - Displacement body 60% -> 50%
+          - Opposing wick allowance 25% -> 35%
+          - H4 trend/location changed from hard veto to research context
+          - Missing opposing HTF barrier no longer auto-rejects the setup
+          - Target/cost floor reduced from 5x to 3x default, 2x safety floor
+
+          Direction rule remains explicit:
+          - Upper liquidity/BSL sweep + reclaim => SELL bias
+          - Lower liquidity/SSL sweep + reclaim => BUY bias
+
+          Recommended validation:
+          1) Re-run the same 45-day x 20-symbol study.
+          2) If sample count is materially higher, re-run the identical 365-day baseline.
+          3) Do not optimize on the final 20% holdout.
+          EOF
+
+      - name: Commit patched source
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/internal/strategy/silverbullet.go ICT2022_V4_CHANGES.txt ICT2022_V4_TEST_REPORT.txt
+          if ! git diff --cached --quiet; then
+            git commit -m "feat: loosen ICT2022 sweep-MSS-FVG research gates"
+            git push origin HEAD:bingx-ict2022-v4
+          fi
+
+      - name: Package ZIP
+        shell: bash
+        run: |
+          rm -f AICryptoTrading_BingX_ICT2022_V4.zip
+          zip -qr AICryptoTrading_BingX_ICT2022_V4.zip . -x '.git/*' 'AICryptoTrading_BingX_ICT2022_V4.zip'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AICryptoTrading_BingX_ICT2022_V4
+          path: AICryptoTrading_BingX_ICT2022_V4.zip
+          if-no-files-found: error
+          retention-days: 7
