@@ -3,6 +3,7 @@ package strategy
 import (
 	"math"
 	"testing"
+	"time"
 
 	"cryptotrading/internal/models"
 )
@@ -76,9 +77,9 @@ func TestICT2022V4RelaxedHTFContextKeepsCounterTrendSweepAsContext(t *testing.T)
 	}
 	bars := make([]h1Bar, 0, len(values))
 	for i, value := range values {
-		barStart := htfBase.AddDate(0, 0, 0).Add(timeDurationHours(i * 4))
+		barStart := htfBase.Add(time.Duration(i*4) * time.Hour)
 		bars = append(bars, h1Bar{
-			Start: barStart, End: barStart.Add(timeDurationHours(4)),
+			Start: barStart, End: barStart.Add(4 * time.Hour),
 			Open: value.close - 0.5, High: value.high, Low: value.low, Close: value.close,
 		})
 	}
@@ -102,9 +103,4 @@ func TestICT2022V4MissingOpposingBarrierDoesNotAutoReject(t *testing.T) {
 	if !targetPathClear(100, 103, bias, p) {
 		t.Fatal("missing confirmed opposing structure should not auto-reject a valid 1:1.5 path")
 	}
-}
-
-// tiny helper keeps this test independent from time.Duration literals in the assertions above.
-func timeDurationHours(hours int) time.Duration {
-	return time.Duration(hours) * time.Hour
 }
