@@ -32,17 +32,3 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
       - run: npm run build
-
-  package-v4:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/bingx-ict2022-v4'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Package branch
-        run: |
-          zip -qr AICryptoTrading_BingX_ICT2022_V4.zip . -x '.git/*' 'AICryptoTrading_BingX_ICT2022_V4.zip'
-      - uses: actions/upload-artifact@v4
-        with:
-          name: AICryptoTrading_BingX_ICT2022_V4
-          path: AICryptoTrading_BingX_ICT2022_V4.zip
-          retention-days: 7
