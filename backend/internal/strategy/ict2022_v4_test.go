@@ -1,0 +1,110 @@
+package strategy
+
+import (
+	"math"
+	"testing"
+
+	"cryptotrading/internal/models"
+)
+
+func TestICT2022V4DefaultResearchParamsAreRelaxed(t *testing.T) {
+	p := DefaultSBParams()
+	if p.MinFVGSizePct != 0.05 {
+		t.Fatalf("MinFVGSizePct = %.4f, want 0.05", p.MinFVGSizePct)
+	}
+	if p.MaxBarsForSweep != 6 {
+		t.Fatalf("MaxBarsForSweep = %d, want 6", p.MaxBarsForSweep)
+	}
+	if p.MaxBarsForRetest != 12 {
+		t.Fatalf("MaxBarsForRetest = %d, want 12", p.MaxBarsForRetest)
+	}
+	if p.CHOCHPivotStrength != 1 {
+		t.Fatalf("CHOCHPivotStrength = %d, want 1", p.CHOCHPivotStrength)
+	}
+	if math.Abs(p.MinDisplacementATR-0.50) > 1e-9 {
+		t.Fatalf("MinDisplacementATR = %.4f, want 0.50", p.MinDisplacementATR)
+	}
+	if math.Abs(p.MinDisplacementVolume-1.00) > 1e-9 {
+		t.Fatalf("MinDisplacementVolume = %.4f, want 1.00", p.MinDisplacementVolume)
+	}
+	if math.Abs(p.MinDisplacementBodyPct-0.50) > 1e-9 {
+		t.Fatalf("MinDisplacementBodyPct = %.4f, want 0.50", p.MinDisplacementBodyPct)
+	}
+	if math.Abs(p.MaxOpposingWickPct-0.35) > 1e-9 {
+		t.Fatalf("MaxOpposingWickPct = %.4f, want 0.35", p.MaxOpposingWickPct)
+	}
+	if math.Abs(p.MinTargetCostMultiple-3.0) > 1e-9 {
+		t.Fatalf("MinTargetCostMultiple = %.4f, want 3.0", p.MinTargetCostMultiple)
+	}
+	if !p.RelaxHTFContext {
+		t.Fatal("DefaultSBParams must enable relaxed HTF context for V4 research")
+	}
+}
+
+func TestICT2022V4NormalizeDoesNotRestoreOldHardDisplacementFloors(t *testing.T) {
+	p := DefaultSBParams()
+	p.MinDisplacementATR = 0.45
+	p.MinDisplacementVolume = 0.90
+	p.MinDisplacementBodyPct = 0.45
+	p.MaxOpposingWickPct = 0.40
+	p.MinTargetCostMultiple = 2.5
+
+	got := NormalizeParams(p)
+	if math.Abs(got.MinDisplacementATR-0.45) > 1e-9 {
+		t.Fatalf("ATR threshold was re-tightened to %.4f", got.MinDisplacementATR)
+	}
+	if math.Abs(got.MinDisplacementVolume-0.90) > 1e-9 {
+		t.Fatalf("volume threshold was re-tightened to %.4f", got.MinDisplacementVolume)
+	}
+	if math.Abs(got.MinDisplacementBodyPct-0.45) > 1e-9 {
+		t.Fatalf("body threshold was re-tightened to %.4f", got.MinDisplacementBodyPct)
+	}
+	if math.Abs(got.MaxOpposingWickPct-0.40) > 1e-9 {
+		t.Fatalf("wick threshold was re-tightened to %.4f", got.MaxOpposingWickPct)
+	}
+	if math.Abs(got.MinTargetCostMultiple-2.5) > 1e-9 {
+		t.Fatalf("cost multiple was re-tightened to %.4f", got.MinTargetCostMultiple)
+	}
+}
+
+func TestICT2022V4RelaxedHTFContextKeepsCounterTrendSweepAsContext(t *testing.T) {
+	values := []struct {
+		high, low, close float64
+	}{
+		{100, 96, 98}, {102, 97, 100}, {105, 98, 103},
+		{103, 99, 101}, {104, 100, 102}, {106, 101, 104}, {107, 102, 106},
+	}
+	bars := make([]h1Bar, 0, len(values))
+	for i, value := range values {
+		barStart := htfBase.AddDate(0, 0, 0).Add(timeDurationHours(i * 4))
+		bars = append(bars, h1Bar{
+			Start: barStart, End: barStart.Add(timeDurationHours(4)),
+			Open: value.close - 0.5, High: value.high, Low: value.low, Close: value.close,
+		})
+	}
+	p := DefaultSBParams()
+	p.HTFStructureLookback = len(bars)
+	p.HTFPivotStrength = 2
+	p.RelaxHTFContext = true
+	sweep := h1Bar{Low: 105, High: 108, Open: 106, Close: 106.5}
+	context := buildHTFContext(bars, sweep, models.SignalSell, p)
+	if !context.Valid {
+		t.Fatalf("relaxed V4 context rejected counter-trend H1 sweep: %#v", context)
+	}
+	if context.Trend != "多頭結構" {
+		t.Fatalf("trend = %q, want 多頭結構 retained as context", context.Trend)
+	}
+}
+
+func TestICT2022V4MissingOpposingBarrierDoesNotAutoReject(t *testing.T) {
+	p := DefaultSBParams()
+	bias := HTFBias{Action: models.SignalBuy, SweepATR: 2}
+	if !targetPathClear(100, 103, bias, p) {
+		t.Fatal("missing confirmed opposing structure should not auto-reject a valid 1:1.5 path")
+	}
+}
+
+// tiny helper keeps this test independent from time.Duration literals in the assertions above.
+func timeDurationHours(hours int) time.Duration {
+	return time.Duration(hours) * time.Hour
+}
