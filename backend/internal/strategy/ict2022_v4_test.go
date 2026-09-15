@@ -9,6 +9,9 @@ import (
 )
 
 func TestICT2022V4DefaultResearchParamsAreRelaxed(t *testing.T) {
+	if StrategyVersion != "ict2022_sweep_mss_fvg_v4" {
+		t.Fatalf("StrategyVersion = %q, want ict2022_sweep_mss_fvg_v4", StrategyVersion)
+	}
 	p := DefaultSBParams()
 	if p.MinFVGSizePct != 0.05 {
 		t.Fatalf("MinFVGSizePct = %.4f, want 0.05", p.MinFVGSizePct)
@@ -102,5 +105,37 @@ func TestICT2022V4MissingOpposingBarrierDoesNotAutoReject(t *testing.T) {
 	bias := HTFBias{Action: models.SignalBuy, SweepATR: 2}
 	if !targetPathClear(100, 103, bias, p) {
 		t.Fatal("missing confirmed opposing structure should not auto-reject a valid 1:1.5 path")
+	}
+}
+
+func TestICT2022V4DetectsValidSweepEvenWhenNoForwardBarrierExists(t *testing.T) {
+	bars := make([]h1Bar, 0, 49)
+	for i := 0; i < 48; i++ {
+		start := htfBase.Add(time.Duration(i) * time.Hour)
+		bars = append(bars, h1Bar{
+			Start: start, End: start.Add(time.Hour),
+			Open: 100, High: 100.5, Low: 99.5, Close: 100, Volume: 10,
+		})
+	}
+	start := htfBase.Add(48 * time.Hour)
+	bars = append(bars, h1Bar{
+		Start: start, End: start.Add(time.Hour),
+		Open: 100, High: 101.2, Low: 98.0, Close: 101.0, Volume: 20,
+	})
+
+	p := DefaultSBParams()
+	p.SwingLookback = 4
+	p.HTFStructureLookback = 4
+	p.RelaxHTFContext = true
+	sweeps := detectH1Sweeps(bars, p)
+	if len(sweeps) == 0 {
+		t.Fatal("valid lower-liquidity sweep was discarded only because no opposing barrier existed")
+	}
+	last := sweeps[len(sweeps)-1]
+	if last.Action != models.SignalBuy {
+		t.Fatalf("lower-liquidity sweep action = %s, want BUY", last.Action)
+	}
+	if last.TargetBarrier != 0 {
+		t.Fatalf("fixture unexpectedly produced barrier %.4f; test requires no barrier", last.TargetBarrier)
 	}
 }
